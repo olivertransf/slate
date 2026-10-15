@@ -37,9 +37,11 @@ final class PlannerStore {
 
     private var revision = 0
     private var token: String?
+    private var flushToken = UUID().uuidString
     private var pending: [String: Pending] = [:]
     private var flushing = false
-    private var googleCache: [GoogleCache] = []
+    private var googleDays: [String: GoogleDay] = [:]
+    private var googleSave: Task<Void, Never>?
 
     func boot() async {
         let preferred = Self.preferredBase(UserDefaults.standard.string(forKey: "slate.base"))
@@ -49,12 +51,16 @@ final class PlannerStore {
         }
         token = Keychain.load()
         if let cached = loadCache() { apply(cached, replace: true) }
+        loadGoogleFile()
+        loadPending()
+        unlocked = token != nil
+        ready = true
         if token != nil {
-            unlocked = true
+            drainIntents()
+            await renewIfNeeded()
             await pull()
             await refreshGoogle()
         }
-        ready = true
         while !Task.isCancelled {
             try? await Task.sleep(for: .seconds(8))
             await pull()
@@ -84,9 +90,11 @@ final class PlannerStore {
     }
 
     func lock() {
+        let current = client()
         token = nil
         Keychain.clear()
         unlocked = false
+        Task { try? await current?.endSession() }
     }
 
     func saveTask(_ record: TaskRecord) {
@@ -144,8 +152,9 @@ final class PlannerStore {
 
     private func queue<T: Encodable & Identifiable>(_ kind: String, _ record: T) where T.ID == String {
         guard let data = try? JSONEncoder().encode(record),
-              let object = try? JSONSerialization.jsonObject(with: data) else { return }
-        pending["\(kind):\(record.id)"] = Pending(kind: kind, object: object)
+              let json = String(data: data, encoding: .utf8) else { return }
+        pending["\(kind):\(record.id)"] = Pending(kind: kind, id: record.id, json: json)
+        savePending()
         scheduleReminders()
         Task { await flush() }
     }
@@ -155,7 +164,8 @@ final class PlannerStore {
         do {
             guard let remote = try await client.manifest(known: revision), remote != revision else { return }
             let snapshot = try await client.snapshot(after: revision)
-            if pending.isEmpty { apply(snapshot, replace: snapshot.reset) }
+            apply(snapshot, replace: snapshot.reset)
+            if !pending.isEmpty { await flush() }
         } catch APIError.locked {
             lock()
         } catch {
@@ -168,24 +178,31 @@ final class PlannerStore {
         flushing = true
         syncing = true
         let batch = pending
+        let token = flushToken
         pending = [:]
         var records: [String: [Any]] = [:]
         for item in batch.values {
-            records[item.kind, default: []].append(item.object)
+            guard let data = item.json.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: data) else { continue }
+            records[item.kind, default: []].append(object)
         }
         do {
-            let snapshot = try await client.push(baseRevision: revision, records: records)
+            let snapshot = try await client.push(baseRevision: revision, records: records, mutationId: token)
             apply(snapshot, replace: snapshot.reset)
+            if flushToken == token { flushToken = UUID().uuidString }
             error = nil
+            savePending()
         } catch let APIError.conflict(snapshot) {
-            apply(snapshot, replace: snapshot.reset)
             for (key, value) in batch where pending[key] == nil { pending[key] = value }
+            savePending()
+            apply(snapshot, replace: snapshot.reset)
             flushing = false
             syncing = false
             await flush()
             return
         } catch {
             for (key, value) in batch where pending[key] == nil { pending[key] = value }
+            savePending()
             self.error = "Changes are saved on this device and will sync when the connection returns."
         }
         flushing = false
@@ -201,13 +218,14 @@ final class PlannerStore {
             habitChecks = snapshot.habitChecks
             countdowns = snapshot.countdowns
         } else {
-            lists = merge(lists, snapshot.lists)
-            tasks = merge(tasks, snapshot.tasks)
-            tags = merge(tags, snapshot.tags)
-            habits = merge(habits, snapshot.habits)
-            habitChecks = merge(habitChecks, snapshot.habitChecks)
-            countdowns = merge(countdowns, snapshot.countdowns)
+            lists = merge(lists, snapshot.lists) { $0.updatedAt }
+            tasks = merge(tasks, snapshot.tasks) { $0.updatedAt }
+            tags = merge(tags, snapshot.tags) { $0.updatedAt }
+            habits = merge(habits, snapshot.habits) { $0.updatedAt }
+            habitChecks = merge(habitChecks, snapshot.habitChecks) { $0.updatedAt }
+            countdowns = merge(countdowns, snapshot.countdowns) { $0.updatedAt }
         }
+        overlayPending()
         revision = snapshot.revision
         let library = Snapshot(
             revision: revision,
@@ -225,6 +243,69 @@ final class PlannerStore {
             UserDefaults.standard.removeObject(forKey: "slate.cache")
         }
         scheduleReminders()
+    }
+
+    private var pendingURL: URL {
+        cacheURL.deletingLastPathComponent().appendingPathComponent("pending.json")
+    }
+
+    private func savePending() {
+        let stored = PendingFile(token: flushToken, items: Array(pending.values))
+        guard let data = try? JSONEncoder().encode(stored) else { return }
+        try? FileManager.default.createDirectory(at: pendingURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        try? data.write(to: pendingURL, options: .atomic)
+    }
+
+    private func loadPending() {
+        guard let data = try? Data(contentsOf: pendingURL),
+              let stored = try? JSONDecoder().decode(PendingFile.self, from: data) else { return }
+        flushToken = stored.token
+        pending = Dictionary(uniqueKeysWithValues: stored.items.map { ("\($0.kind):\($0.id)", $0) })
+    }
+
+    private func overlayPending() {
+        let decoder = JSONDecoder()
+        for item in pending.values {
+            guard let data = item.json.data(using: .utf8) else { continue }
+            switch item.kind {
+            case "lists":
+                if let record = try? decoder.decode(ListRecord.self, from: data) { lists = merge(lists, [record]) { $0.updatedAt } }
+            case "tasks":
+                if let record = try? decoder.decode(TaskRecord.self, from: data) { tasks = merge(tasks, [record]) { $0.updatedAt } }
+            case "tags":
+                if let record = try? decoder.decode(TagRecord.self, from: data) { tags = merge(tags, [record]) { $0.updatedAt } }
+            case "habits":
+                if let record = try? decoder.decode(HabitRecord.self, from: data) { habits = merge(habits, [record]) { $0.updatedAt } }
+            case "habitChecks":
+                if let record = try? decoder.decode(HabitCheckRecord.self, from: data) { habitChecks = merge(habitChecks, [record]) { $0.updatedAt } }
+            case "countdowns":
+                if let record = try? decoder.decode(CountdownRecord.self, from: data) { countdowns = merge(countdowns, [record]) { $0.updatedAt } }
+            default:
+                break
+            }
+        }
+    }
+
+    private func renewIfNeeded() async {
+        guard let token, let exp = Int(token.split(separator: ".").first ?? "") else { return }
+        guard exp - Int(Date().timeIntervalSince1970) < 2 * 86_400, let client = client() else { return }
+        if let next = try? await client.renew() {
+            self.token = next
+            Keychain.save(next)
+        }
+    }
+
+    private func drainIntents() {
+        let titles = UserDefaults.standard.stringArray(forKey: "slate.intent.tasks") ?? []
+        guard !titles.isEmpty else { return }
+        UserDefaults.standard.removeObject(forKey: "slate.intent.tasks")
+        for title in titles where !title.trimmingCharacters(in: .whitespaces).isEmpty {
+            saveTask(TaskRecord(
+                id: UUID().uuidString, title: title, notes: "", listId: nil, sectionId: nil, priority: 0,
+                tagIds: [], dueOn: nil, dueTime: nil, repeatRule: nil, remindMinutesBefore: nil,
+                completedAt: nil, subtasks: [], sort: Date().timeIntervalSince1970, updatedAt: "", deletedAt: nil
+            ))
+        }
     }
 
     private var cacheURL: URL {
@@ -306,7 +387,7 @@ final class PlannerStore {
         let next = Self.preferredBase(value)
         baseURL = next
         UserDefaults.standard.set(next, forKey: "slate.base")
-        googleCache.removeAll()
+        clearGoogle()
         Task { await refreshGoogle() }
     }
 
@@ -320,10 +401,11 @@ final class PlannerStore {
             let was = googleAccount?.connected == true
             googleAccount = next
             googleMessage = nil
-            if (next.connected) != was {
-                googleCache.removeAll()
+            if next.connected != was {
+                if next.connected { markGoogleStale() } else { clearGoogle() }
                 googleGeneration += 1
             }
+            saveGoogleSoon()
         } catch {
             googleMessage = "Could not reach \(baseURL)."
             if googleAccount?.connected != true { googleAccount = nil }
@@ -351,18 +433,46 @@ final class PlannerStore {
         #endif
     }
 
+    func cachedGoogleEvents(start: String, end: String) -> [GoogleEvent] {
+        googleRange(start, end).flatMap { googleDays[$0]?.events ?? [] }
+    }
+
     func googleEvents(start: String, end: String) async -> [GoogleEvent] {
-        if let hit = freshGoogle(start: start, end: end) { return hit }
-        guard let client = client() else { return storedGoogle(start: start, end: end) }
+        let days = googleRange(start, end)
+        let fresh = days.allSatisfy { day in
+            googleDays[day].map { Date().timeIntervalSince($0.at) < 120 } ?? false
+        }
+        if fresh { return cachedGoogleEvents(start: start, end: end) }
+        guard googleAccount?.connected != false, let client = client() else { return cachedGoogleEvents(start: start, end: end) }
         do {
             let events = try await client.googleEvents(start: start, end: end)
-            if events.isEmpty, googleAccount?.connected != true { return events }
-            googleCache.append(GoogleCache(start: start, end: end, at: .now, events: events))
-            if googleCache.count > 8 { googleCache.removeFirst(googleCache.count - 8) }
-            return events
+            if events.isEmpty, googleAccount?.connected != true { return cachedGoogleEvents(start: start, end: end) }
+            let grouped = Dictionary(grouping: events, by: \.day)
+            let now = Date()
+            for day in days { googleDays[day] = GoogleDay(at: now, events: grouped[day] ?? []) }
+            saveGoogleSoon()
+            return cachedGoogleEvents(start: start, end: end)
         } catch {
-            return storedGoogle(start: start, end: end)
+            return cachedGoogleEvents(start: start, end: end)
         }
+    }
+
+    func convertToEvent(_ task: TaskRecord) async -> String? {
+        guard googleAccount?.connected == true else { return "Connect Google Calendar in Settings first." }
+        guard let client = client() else { return "The server address is invalid." }
+        do {
+            _ = try await client.createEvent(from: task, day: task.dueOn ?? Day.iso())
+        } catch let error as APIError {
+            return describe(error)
+        } catch {
+            return "Could not reach \(baseURL)."
+        }
+        var trashed = task
+        trashed.deletedAt = ISO8601DateFormatter().string(from: .now)
+        saveTask(trashed)
+        markGoogleStale()
+        googleGeneration += 1
+        return nil
     }
 
     func googleStartURL() async -> URL? {
@@ -370,39 +480,103 @@ final class PlannerStore {
         return try? await client.googleStartURL()
     }
 
+    func attachImage(_ record: CountdownRecord, data: Data) async {
+        guard let client = client(), let key = try? await client.uploadImage(data, type: "image/jpeg") else { return }
+        var next = record
+        next.imageKey = key
+        saveCountdown(next)
+    }
+
     func googleLogout() async {
         guard let client = client() else { return }
         try? await client.googleLogout()
         googleAccount = GoogleStatus(configured: googleAccount?.configured ?? true, connected: false, calendars: [])
-        googleCache.removeAll()
+        clearGoogle()
         googleGeneration += 1
     }
 
-    private func stamp() -> String { ISO8601DateFormatter().string(from: .now) }
+    private var googleURL: URL {
+        cacheURL.deletingLastPathComponent().appendingPathComponent("google.json")
+    }
 
-    private func freshGoogle(start: String, end: String) -> [GoogleEvent]? {
-        guard let hit = googleCache.last(where: { $0.start <= start && $0.end >= end && Date().timeIntervalSince($0.at) < 120 }) else {
-            return nil
+    private func googleRange(_ start: String, _ end: String) -> [String] {
+        var days: [String] = []
+        var cursor = start
+        while cursor < end && days.count < 400 {
+            days.append(cursor)
+            cursor = Day.add(cursor, days: 1)
         }
-        return hit.events.filter { $0.day >= start && $0.day < end }
+        return days
     }
 
-    private func storedGoogle(start: String, end: String) -> [GoogleEvent] {
-        guard let hit = googleCache.last(where: { $0.start <= start && $0.end >= end }) else { return [] }
-        return hit.events.filter { $0.day >= start && $0.day < end }
+    private func loadGoogleFile() {
+        guard let data = try? Data(contentsOf: googleURL),
+              let file = try? JSONDecoder().decode(GoogleFile.self, from: data),
+              file.server == baseURL else { return }
+        googleDays = file.days
+        if googleAccount == nil { googleAccount = file.account }
     }
+
+    private func saveGoogleSoon() {
+        googleSave?.cancel()
+        googleSave = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(1))
+            guard !Task.isCancelled, let self else { return }
+            let low = Day.add(Day.iso(), days: -120)
+            let high = Day.add(Day.iso(), days: 400)
+            self.googleDays = self.googleDays.filter { $0.key >= low && $0.key <= high }
+            let file = GoogleFile(server: self.baseURL, account: self.googleAccount, days: self.googleDays)
+            guard let data = try? JSONEncoder().encode(file) else { return }
+            try? FileManager.default.createDirectory(at: self.googleURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: self.googleURL, options: .atomic)
+        }
+    }
+
+    private func markGoogleStale() {
+        for key in googleDays.keys { googleDays[key]?.at = .distantPast }
+    }
+
+    private func clearGoogle() {
+        googleSave?.cancel()
+        googleDays.removeAll()
+        try? FileManager.default.removeItem(at: googleURL)
+    }
+
+    private func stamp() -> String {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter.string(from: .now)
+    }
+
 }
 
-private struct Pending {
+private struct Pending: Codable {
     var kind: String
-    var object: Any
+    var id: String
+    var json: String
 }
 
-private struct GoogleCache {
-    var start: String
-    var end: String
+private struct PendingFile: Codable {
+    var token: String
+    var items: [Pending]
+}
+
+private func parseStamp(_ value: String) -> Date? {
+    let fractional = ISO8601DateFormatter()
+    fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+    if let date = fractional.date(from: value) { return date }
+    return ISO8601DateFormatter().date(from: value)
+}
+
+private struct GoogleDay: Codable {
     var at: Date
     var events: [GoogleEvent]
+}
+
+private struct GoogleFile: Codable {
+    var server: String
+    var account: GoogleStatus?
+    var days: [String: GoogleDay]
 }
 
 private func upsert<T: Identifiable>(_ list: [T], _ item: T) -> [T] where T.ID == String {
@@ -411,8 +585,15 @@ private func upsert<T: Identifiable>(_ list: [T], _ item: T) -> [T] where T.ID =
     return next
 }
 
-private func merge<T: Identifiable>(_ local: [T], _ remote: [T]) -> [T] where T.ID == String {
+private func merge<T: Identifiable>(_ local: [T], _ remote: [T], stamp: (T) -> String) -> [T] where T.ID == String {
     var map = Dictionary(uniqueKeysWithValues: local.map { ($0.id, $0) })
-    for item in remote { map[item.id] = item }
+    for item in remote {
+        if let current = map[item.id] {
+            let left = parseStamp(stamp(current))?.timeIntervalSince1970 ?? 0
+            let right = parseStamp(stamp(item))?.timeIntervalSince1970 ?? 0
+            if right < left { continue }
+        }
+        map[item.id] = item
+    }
     return Array(map.values)
 }

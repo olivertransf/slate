@@ -7,6 +7,7 @@ enum RepeatUnit: String, Codable, CaseIterable {
 struct RepeatRule: Codable, Equatable, Hashable {
     var every: Int
     var unit: RepeatUnit
+    var weekdays: [Int]? = nil
 }
 
 struct TaskSection: Codable, Identifiable, Equatable, Hashable {
@@ -23,6 +24,7 @@ struct ListRecord: Codable, Identifiable, Equatable {
     var sections: [TaskSection]
     var updatedAt: String
     var deletedAt: String?
+    var archivedAt: String? = nil
 }
 
 struct Subtask: Codable, Identifiable, Equatable, Hashable {
@@ -48,9 +50,10 @@ struct TaskRecord: Codable, Identifiable, Equatable, Hashable {
     var sort: Double
     var updatedAt: String
     var deletedAt: String?
+    var startOn: String? = nil
 
     enum CodingKeys: String, CodingKey {
-        case id, title, notes, listId, sectionId, priority, tagIds, dueOn, dueTime
+        case id, title, notes, listId, sectionId, priority, tagIds, dueOn, dueTime, startOn
         case repeatRule = "repeat"
         case remindMinutesBefore, completedAt, subtasks, sort, updatedAt, deletedAt
     }
@@ -73,6 +76,8 @@ struct HabitRecord: Codable, Identifiable, Equatable {
     var sort: Double
     var updatedAt: String
     var deletedAt: String?
+    var archivedAt: String? = nil
+    var reminderTime: String? = nil
 }
 
 struct HabitCheckRecord: Codable, Identifiable, Equatable {
@@ -95,6 +100,7 @@ struct CountdownRecord: Codable, Identifiable, Equatable {
     var sort: Double
     var updatedAt: String
     var deletedAt: String?
+    var remindDaysBefore: Int? = nil
 }
 
 struct Snapshot: Codable {
@@ -240,6 +246,8 @@ struct TaskIndex {
     var tomorrow: [TaskRecord] = []
     var week: [TaskRecord] = []
     var completed: [TaskRecord] = []
+    var overdue: [TaskRecord] = []
+    var trash: [TaskRecord] = []
     var byList: [String: [TaskRecord]] = [:]
     var byTag: [String: [TaskRecord]] = [:]
 
@@ -250,6 +258,8 @@ struct TaskIndex {
         case "tomorrow": return tomorrow
         case "week": return week
         case "completed": return completed
+        case "overdue": return overdue
+        case "trash": return trash
         default:
             if view.hasPrefix("list:") { return byList[String(view.dropFirst(5)), default: []] }
             if view.hasPrefix("tag:") { return byTag[String(view.dropFirst(4)), default: []] }
@@ -261,13 +271,17 @@ struct TaskIndex {
         let bounds = Day.today()
         var index = TaskIndex()
         for task in tasks {
-            if task.deletedAt != nil { continue }
+            if task.deletedAt != nil {
+                index.trash.append(task)
+                continue
+            }
             if task.completedAt != nil {
                 index.completed.append(task)
                 continue
             }
             if task.listId == nil { index.inbox.append(task) }
             if let due = task.dueOn {
+                if due < bounds.today { index.overdue.append(task) }
                 if due <= bounds.today { index.today.append(task) }
                 if due == bounds.tomorrow { index.tomorrow.append(task) }
                 if due <= bounds.weekEnd { index.week.append(task) }
@@ -281,6 +295,8 @@ struct TaskIndex {
         index.tomorrow.sort(by: bySort)
         index.week.sort(by: bySort)
         index.completed.sort { ($0.completedAt ?? "") > ($1.completedAt ?? "") }
+        index.overdue.sort(by: bySort)
+        index.trash.sort { ($0.deletedAt ?? "") > ($1.deletedAt ?? "") }
         for key in index.byList.keys {
             var items = index.byList[key] ?? []
             items.sort(by: bySort)
@@ -296,6 +312,8 @@ struct TaskIndex {
 }
 
 func matches(task: TaskRecord, view: String, today: String = Day.today().today) -> Bool {
+    if view == "trash" { return task.deletedAt != nil }
+    if view == "completed" { return task.deletedAt == nil && task.completedAt != nil }
     guard taskOpen(task) else { return false }
     let bounds = Day.today()
     let tomorrow = today == bounds.today ? bounds.tomorrow : Day.add(today, days: 1)
@@ -305,6 +323,9 @@ func matches(task: TaskRecord, view: String, today: String = Day.today().today) 
     case "today": return task.dueOn != nil && task.dueOn! <= today
     case "tomorrow": return task.dueOn == tomorrow
     case "week": return task.dueOn != nil && task.dueOn! <= weekEnd
+    case "overdue": return task.dueOn != nil && task.dueOn! < today
+    case "completed": return task.deletedAt == nil && task.completedAt != nil
+    case "trash": return task.deletedAt != nil
     default:
         if view.hasPrefix("list:") { return task.listId == String(view.dropFirst(5)) }
         if view.hasPrefix("tag:") { return task.tagIds.contains(String(view.dropFirst(4))) }

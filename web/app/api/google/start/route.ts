@@ -11,7 +11,7 @@ export async function GET(request: Request) {
   }
   const url = new URL(request.url);
   const app = url.searchParams.get("client") === "app";
-  if (!sessionOk(request)) {
+  if (!(await sessionOk(request))) {
     if (app) return Response.json({ error: "Unlock required." }, { status: 401 });
     return Response.redirect(`${url.origin}/?google=locked`, 302);
   }

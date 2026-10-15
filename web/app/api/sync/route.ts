@@ -1,4 +1,7 @@
-import { readToken, tokenValid } from "@/lib/session";
+import { requestAllowed } from "@/lib/access";
+import { logEvent } from "@/lib/log";
+import { readToken, renewToken, sessionCookie } from "@/lib/session";
+import { sanitizeRecords } from "@/lib/records";
 import { readRevision, readSnapshot, writeRecords } from "@/lib/snapshot";
 import { KINDS, type Kind, type Snapshot } from "@/lib/model";
 
@@ -35,46 +38,52 @@ function denied() {
   return Response.json({ error: "Unlock required." }, { status: 401 });
 }
 
-function authorized(request: Request): boolean {
-  try {
-    return tokenValid(readToken(request));
-  } catch {
-    return false;
-  }
+function renewal(request: Request): Headers {
+  const headers = new Headers({ "Cache-Control": "no-store" });
+  const next = renewToken(readToken(request) ?? "");
+  if (next) headers.set("Set-Cookie", sessionCookie(next));
+  return headers;
 }
 
 export async function GET(request: Request) {
-  if (!authorized(request)) return denied();
+  if (!(await requestAllowed(request))) return denied();
+  const headers = renewal(request);
   const url = new URL(request.url);
   if (url.searchParams.get("manifest") === "1") {
     const revision = await readRevision();
     const etag = `"${revision}"`;
     if (request.headers.get("if-none-match") === etag) {
-      return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
+      headers.set("ETag", etag);
+      return new Response(null, { status: 304, headers });
     }
-    return Response.json(
-      { revision },
-      { headers: { ETag: etag, "Cache-Control": "no-store" } },
-    );
+    headers.set("ETag", etag);
+    return Response.json({ revision }, { headers });
   }
   const after = Number(url.searchParams.get("after") ?? "0");
   const snapshot = await readSnapshot(Number.isFinite(after) ? after : 0);
-  return Response.json(snapshot, { headers: { "Cache-Control": "no-store" } });
+  return Response.json(snapshot, { headers });
 }
 
 export async function PUT(request: Request) {
-  if (!authorized(request)) return denied();
-  const body = (await request.json().catch(() => null)) as { baseRevision?: number; records?: Partial<Snapshot> } | null;
+  if (!(await requestAllowed(request))) return denied();
+  const body = (await request.json().catch(() => null)) as {
+    baseRevision?: number;
+    records?: Partial<Snapshot>;
+    mutationId?: string;
+  } | null;
   if (!body || typeof body.baseRevision !== "number" || !body.records) {
     return Response.json({ error: "Missing revision." }, { status: 400 });
   }
+  const mutationId = typeof body.mutationId === "string" && body.mutationId.length <= 80 ? body.mutationId : undefined;
+  const sanitized = sanitizeRecords(body.records);
+  if (sanitized.rejected > 0) logEvent("sync.rejected", { count: sanitized.rejected });
   const records: Partial<Snapshot> = {};
   for (const kind of KINDS) {
-    const list = body.records[kind];
-    if (!Array.isArray(list)) continue;
-    assignKind(records, kind, list.filter((record) => record && typeof record.id === "string"));
+    const list = sanitized.records[kind];
+    if (!Array.isArray(list) || list.length === 0) continue;
+    assignKind(records, kind, list);
   }
-  const result = await writeRecords(body.baseRevision, records);
+  const result = await writeRecords(body.baseRevision, records, mutationId);
   if ("conflict" in result) {
     return Response.json({ conflict: true, snapshot: result.conflict }, { status: 409 });
   }

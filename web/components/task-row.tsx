@@ -8,12 +8,16 @@ export function TaskRow({
   selected,
   onSelect,
   onComplete,
+  onDelete,
+  onReorder,
   draggable = false,
 }: {
   task: TaskRecord;
   selected: boolean;
   onSelect: () => void;
   onComplete: () => void;
+  onDelete?: () => void;
+  onReorder?: () => void;
   draggable?: boolean;
 }) {
   const day = dayISO(new Date());
@@ -21,7 +25,24 @@ export function TaskRow({
 
   return (
     <div
-      className={selected ? "task selected" : task.completedAt ? "task done" : "task"}
+      className={selected ? "task selected swipe-row" : task.completedAt ? "task done swipe-row" : "task swipe-row"}
+      onPointerDown={(event) => {
+        const startX = event.clientX;
+        const row = event.currentTarget;
+        function move(next: PointerEvent) {
+          const delta = Math.min(0, next.clientX - startX);
+          row.style.transform = `translateX(${delta}px)`;
+        }
+        function up(next: PointerEvent) {
+          row.style.transform = "";
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          if (startX - next.clientX > 72) onDelete?.();
+          if (next.clientX - startX > 72) onReorder?.();
+        }
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      }}
       role="button"
       tabIndex={0}
       onKeyDown={(event) => {

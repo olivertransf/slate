@@ -3,7 +3,14 @@ import { promisify } from "node:util";
 
 const scryptAsync = promisify(scrypt);
 const COOKIE = "slate_session";
-const MAX_AGE_SECONDS = 60 * 60 * 24 * 400;
+const MAX_AGE_SECONDS = 60 * 60 * 24 * 14;
+
+export type TokenClaims = {
+  exp: number;
+  epoch: number;
+  device: string;
+  legacy: boolean;
+};
 
 export function cookieName(): string {
   return COOKIE;
@@ -31,23 +38,54 @@ function secret(): string {
   return value;
 }
 
-export function issueToken(now = Date.now()): string {
-  const exp = Math.floor(now / 1000) + MAX_AGE_SECONDS;
-  const sig = createHmac("sha256", secret()).update(String(exp)).digest("base64url");
-  return `${exp}.${sig}`;
+export function deviceId(value: string | null | undefined): string {
+  const cleaned = (value ?? "web").replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 64);
+  return cleaned || "web";
 }
 
-export function tokenValid(token: string | null | undefined, now = Date.now()): boolean {
-  if (!token) return false;
-  const [expText, sig] = token.split(".");
-  if (!expText || !sig) return false;
-  const exp = Number(expText);
-  if (!Number.isFinite(exp) || exp * 1000 < now) return false;
-  const expected = createHmac("sha256", secret()).update(expText).digest("base64url");
+export function issueToken(epoch = 0, device = "web", now = Date.now()): string {
+  const exp = Math.floor(now / 1000) + MAX_AGE_SECONDS;
+  const payload = `${exp}.${epoch}.${deviceId(device)}`;
+  const sig = createHmac("sha256", secret()).update(payload).digest("base64url");
+  return `${payload}.${sig}`;
+}
+
+export function readClaims(token: string | null | undefined): TokenClaims | null {
+  if (!token) return null;
+  const bits = token.split(".");
+  if (bits.length === 2) {
+    const exp = Number(bits[0]);
+    if (!Number.isFinite(exp)) return null;
+    return { exp, epoch: 0, device: "legacy", legacy: true };
+  }
+  if (bits.length !== 4) return null;
+  const exp = Number(bits[0]);
+  const epoch = Number(bits[1]);
+  if (!Number.isFinite(exp) || !Number.isFinite(epoch) || !bits[2]) return null;
+  return { exp, epoch, device: bits[2], legacy: false };
+}
+
+function signatureMatches(payload: string, sig: string): boolean {
+  const expected = createHmac("sha256", secret()).update(payload).digest("base64url");
   const actual = Buffer.from(sig);
   const wanted = Buffer.from(expected);
   if (actual.length !== wanted.length) return false;
   return timingSafeEqual(actual, wanted);
+}
+
+export function tokenValid(token: string | null | undefined, now = Date.now()): boolean {
+  const claims = readClaims(token);
+  if (!token || !claims || claims.exp * 1000 < now) return false;
+  const bits = token.split(".");
+  if (claims.legacy) return signatureMatches(bits[0] ?? "", bits[1] ?? "");
+  return signatureMatches(`${bits[0]}.${bits[1]}.${bits[2]}`, bits[3] ?? "");
+}
+
+export function renewToken(token: string, now = Date.now()): string | null {
+  const claims = readClaims(token);
+  if (!claims || claims.legacy || !tokenValid(token, now)) return null;
+  if (claims.exp * 1000 - now > 2 * 24 * 60 * 60 * 1000) return null;
+  return issueToken(claims.epoch, claims.device, now);
 }
 
 export function sessionCookie(token: string): string {

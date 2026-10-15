@@ -1,4 +1,5 @@
 import {
+  DeleteObjectCommand,
   GetObjectCommand,
   HeadBucketCommand,
   ListObjectsV2Command,
@@ -78,6 +79,10 @@ export async function putBytes(key: string, body: Uint8Array, type: string): Pro
       ContentType: type,
     }),
   );
+}
+
+export async function deleteKey(key: string): Promise<void> {
+  await r2().send(new DeleteObjectCommand({ Bucket: bucketName(), Key: key }));
 }
 
 export async function listKeys(prefix: string): Promise<string[]> {

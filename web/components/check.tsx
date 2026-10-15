@@ -18,9 +18,9 @@ export function Check({
   );
   if (quiet) {
     return (
-      <span className={on ? "check on" : "check"} onClick={(event) => { event.stopPropagation(); onClick(); }}>
+      <button type="button" className={on ? "check on" : "check"} aria-label={label} aria-pressed={on} onClick={(event) => { event.stopPropagation(); onClick(); }}>
         {mark}
-      </span>
+      </button>
     );
   }
   return (

@@ -27,8 +27,11 @@ targets:
         CFBundleDisplayName: Slate
         CFBundleShortVersionString: "1.0"
         UILaunchScreen: {}
-        UIUserInterfaceStyle: Light
         NSUserNotificationsUsageDescription: Slate reminds you when a task is due.
+        UIBackgroundModes:
+          - fetch
+        BGTaskSchedulerPermittedIdentifiers:
+          - com.olivertran.slate.refresh
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:

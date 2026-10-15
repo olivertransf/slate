@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState, type FormEvent } from "react";
-import { alive, matchesView, type ListRecord, type TagRecord } from "@/lib/model";
+import { alive, matchesView, visibleLists, type ListRecord, type TagRecord } from "@/lib/model";
 import { newId, today, usePlanner } from "./planner-context";
 
 const VIEWS = [
@@ -9,6 +9,7 @@ const VIEWS = [
   ["today", "Today", "M12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM12 3v1.6M12 19.4V21M3 12h1.6M19.4 12H21M5.1 5.1l1.1 1.1M17.8 17.8l1.1 1.1M18.9 5.1l-1.1 1.1M6.2 17.8l-1.1 1.1"],
   ["tomorrow", "Tomorrow", "M12 16.5a4.5 4.5 0 1 0 0-9 4.5 4.5 0 0 0 0 9zM8.2 18.6A6.5 6.5 0 0 1 12 5.5"],
   ["week", "Next 7 Days", "M5 5.5h14A1.5 1.5 0 0 1 20.5 7v12a1.5 1.5 0 0 1-1.5 1.5H5A1.5 1.5 0 0 1 3.5 19V7A1.5 1.5 0 0 1 5 5.5zM3.5 10h17M8 3.5v4M16 3.5v4"],
+  ["overdue", "Overdue", "M12 8v4M12 16h.01M12 3.5 20 19.5H4z"],
 ] as const;
 
 const COLORS = ["#8C5EFA", "#4772FA", "#22A06B", "#E5484D", "#F5A524"];
@@ -27,8 +28,10 @@ export function Sidebar({
   onView: (view: string) => void;
 }) {
   const { data, save, lock } = usePlanner();
-  const lists = alive(data.lists).sort((a, b) => a.sort - b.sort);
+  const lists = visibleLists(data.lists);
+  const archived = alive(data.lists).filter((list) => list.archivedAt).sort((a, b) => a.sort - b.sort);
   const tags = alive(data.tags);
+  const [archivedOpen, setArchivedOpen] = useState(false);
   const [draft, setDraft] = useState("");
   const [adding, setAdding] = useState(false);
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -51,6 +54,11 @@ export function Sidebar({
 
   function recolor(list: ListRecord, color: string) {
     save("lists", { ...list, color });
+  }
+
+  function archiveList(list: ListRecord) {
+    save("lists", { ...list, archivedAt: list.archivedAt ? null : new Date().toISOString() });
+    if (view === `list:${list.id}`) onView("inbox");
   }
 
   function removeList(list: ListRecord) {
@@ -138,6 +146,9 @@ export function Sidebar({
                     onClick={() => recolor(list, color)}
                   />
                 ))}
+                <button type="button" className="text-button" onMouseDown={(event) => event.preventDefault()} onClick={() => archiveList(list)}>
+                  {list.archivedAt ? "Unarchive" : "Archive"}
+                </button>
                 <button type="button" className="text-button" onMouseDown={(event) => event.preventDefault()} onClick={() => removeList(list)}>
                   Delete
                 </button>
@@ -183,6 +194,22 @@ export function Sidebar({
             </button>
           </div>
         ))}
+        <button type="button" className="nav-button" onClick={() => setArchivedOpen((open) => !open)}>
+          <span className="nav-slot" aria-hidden="true">{archivedOpen ? "−" : "+"}</span>
+          <span className="nav-label">Archived Lists</span>
+        </button>
+        {archivedOpen && archived.map((list) => (
+          <button key={list.id} className="nav-button" onClick={() => onView(`list:${list.id}`)}>
+            <span className="nav-label">{list.name}</span>
+          </button>
+        ))}
+        <button type="button" className={view === "completed" ? "nav-button active" : "nav-button"} onClick={() => onView("completed")}>
+          <span className="nav-label">Completed</span>
+          <span className="nav-count">{data.tasks.filter((task) => matchesView(task, "completed", day)).length || ""}</span>
+        </button>
+        <button type="button" className={view === "trash" ? "nav-button active" : "nav-button"} onClick={() => onView("trash")}>
+          <span className="nav-label">Trash</span>
+        </button>
         {adding ? (
           <form className="list-edit" onSubmit={addList}>
             <input

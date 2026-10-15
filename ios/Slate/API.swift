@@ -12,7 +12,7 @@ struct APIClient {
     var token: String?
 
     func unlock(passphrase: String) async throws -> String {
-        let body = try await send("/api/session", method: "POST", json: ["passphrase": passphrase], authorized: false)
+        let body = try await send("/api/session", method: "POST", json: ["passphrase": passphrase, "device": DeviceID.current], authorized: false)
         guard let token = body["token"] as? String else { throw APIError.message("Unlock failed.") }
         return token
     }
@@ -46,6 +46,30 @@ struct APIClient {
         return try JSONDecoder().decode(GoogleEventsBody.self, from: data).events
     }
 
+    func createEvent(from task: TaskRecord, day: String) async throws -> GoogleEvent {
+        var request = make("/api/google/events", method: "POST")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        var body: [String: Any] = [
+            "title": task.title,
+            "notes": task.notes,
+            "day": day,
+            "minutes": 60,
+            "timeZone": TimeZone.current.identifier,
+        ]
+        if let time = task.dueTime { body["time"] = time }
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let http = response as? HTTPURLResponse else { throw APIError.message("No response.") }
+        if http.statusCode == 401 { throw APIError.locked }
+        guard (200..<300).contains(http.statusCode) else {
+            let payload = (try? JSONSerialization.jsonObject(with: data) as? [String: Any]) ?? [:]
+            var message = payload["error"] as? String ?? "Could not create the event."
+            if payload["reconnect"] as? Bool == true { message += " Open Settings and sign in to Google again." }
+            throw APIError.message(message)
+        }
+        return try JSONDecoder().decode(CreatedEvent.self, from: data).event
+    }
+
     func googleStartURL() async throws -> URL {
         let (data, response) = try await URLSession.shared.data(for: make("/api/google/start?client=app"))
         try validate(response, data: data)
@@ -61,10 +85,39 @@ struct APIClient {
         try validate(response, data: data)
     }
 
-    func push(baseRevision: Int, records: [String: Any]) async throws -> Snapshot {
+    func endSession() async throws {
+        let (data, response) = try await URLSession.shared.data(for: make("/api/session", method: "DELETE"))
+        try validate(response, data: data)
+    }
+
+    func renew() async throws -> String {
+        let body = try await send("/api/session", method: "POST", json: ["renew": true], authorized: true)
+        guard let token = body["token"] as? String else { throw APIError.message("Could not renew the session.") }
+        return token
+    }
+
+    func uploadImage(_ data: Data, type: String) async throws -> String {
+        let boundary = "slate-\(UUID().uuidString)"
+        var request = make("/api/files", method: "POST")
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+        var body = Data()
+        body.append(Data("--\(boundary)\r\n".utf8))
+        body.append(Data("Content-Disposition: form-data; name=\"file\"; filename=\"image\"\r\n".utf8))
+        body.append(Data("Content-Type: \(type)\r\n\r\n".utf8))
+        body.append(data)
+        body.append(Data("\r\n--\(boundary)--\r\n".utf8))
+        request.httpBody = body
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+        try validate(response, data: responseData)
+        let payload = (try JSONSerialization.jsonObject(with: responseData) as? [String: Any]) ?? [:]
+        guard let key = payload["key"] as? String else { throw APIError.message("Image upload failed.") }
+        return key
+    }
+
+    func push(baseRevision: Int, records: [String: Any], mutationId: String) async throws -> Snapshot {
         var request = make("/api/sync", method: "PUT")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.httpBody = try JSONSerialization.data(withJSONObject: ["baseRevision": baseRevision, "records": records])
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["baseRevision": baseRevision, "records": records, "mutationId": mutationId])
         let (data, response) = try await URLSession.shared.data(for: request)
         guard let http = response as? HTTPURLResponse else { throw APIError.message("No response.") }
         if http.statusCode == 409 {
@@ -76,12 +129,14 @@ struct APIClient {
 
     private struct Conflict: Codable { var snapshot: Snapshot }
     private struct GoogleEventsBody: Codable { var events: [GoogleEvent] }
+    private struct CreatedEvent: Codable { var event: GoogleEvent }
 
     private func make(_ path: String, method: String = "GET") -> URLRequest {
         let url = URL(string: path, relativeTo: baseURL)!.absoluteURL
         var request = URLRequest(url: url)
         request.httpMethod = method
         if let token { request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization") }
+        request.setValue(DeviceID.current, forHTTPHeaderField: "x-slate-device")
         return request
     }
 
@@ -105,6 +160,15 @@ struct APIClient {
     }
 }
 
+enum DeviceID {
+    static var current: String {
+        if let stored = UserDefaults.standard.string(forKey: "slate.device") { return stored }
+        let next = UUID().uuidString.replacingOccurrences(of: "-", with: "").lowercased()
+        UserDefaults.standard.set(next, forKey: "slate.device")
+        return next
+    }
+}
+
 enum Keychain {
     private static let account = "slate.session"
 
@@ -114,6 +178,7 @@ enum Keychain {
         SecItemDelete(query as CFDictionary)
         var add = query
         add[kSecValueData as String] = data
+        add[kSecAttrAccessible as String] = kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         SecItemAdd(add as CFDictionary, nil)
     }
 

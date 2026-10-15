@@ -1,4 +1,5 @@
 import AuthenticationServices
+import PhotosUI
 import SwiftUI
 import UIKit
 
@@ -6,13 +7,13 @@ struct RootView: View {
     @Environment(PlannerStore.self) private var store
     @Environment(\.horizontalSizeClass) private var size
     @Environment(\.colorScheme) private var scheme
-    @State private var view = "today"
-    @State private var section = "tasks"
+    @AppStorage("slate.lastView") private var view = "today"
+    @AppStorage("slate.lastSection") private var section = "tasks"
     @State private var taskSelection: TaskRecord?
     @State private var calendarSelection: TaskRecord?
     @State private var editor: TaskRecord?
-    @State private var tab = "tasks"
-    @State private var listsOpen = false
+    @AppStorage("slate.lastTab") private var tab = "tasks"
+    @State private var menuOpen = false
 
     var body: some View {
         Group {
@@ -48,46 +49,55 @@ struct RootView: View {
         }
         .background(palette.stage)
         .foregroundStyle(palette.ink)
+        .overlay(alignment: .top) {
+            if let message = store.error {
+                Text(message).font(.footnote.weight(.semibold)).padding(8).background(.ultraThinMaterial, in: Capsule()).padding(.top, 8)
+            } else if store.syncing {
+                Text("Syncing").font(.footnote.weight(.semibold)).padding(8).background(.ultraThinMaterial, in: Capsule()).padding(.top, 8)
+            }
+        }
     }
 
     private var phone: some View {
         TabView(selection: $tab) {
-            NavigationStack {
-                TaskList(view: view, selected: $taskSelection)
-                    .navigationDestination(item: $taskSelection) { task in
-                        TaskEditor(task: task)
-                    }
-                    .toolbar {
-                        ToolbarItem(placement: .topBarLeading) {
-                            Button { listsOpen = true } label: { Image(systemName: "list.bullet") }
-                                .accessibilityLabel("Lists")
-                        }
-                        ToolbarItem(placement: .topBarTrailing) {
-                            NavigationLink { SettingsScreen() } label: { Image(systemName: "gearshape") }
-                                .accessibilityLabel("Settings")
-                        }
-                    }
-            }
-            .tabItem { Label("Tasks", systemImage: "checkmark.circle") }
-            .tag("tasks")
-
-            NavigationStack {
-                CalendarScreen(onSelect: { calendarSelection = $0 })
-                    .navigationDestination(item: $calendarSelection) { task in
-                        TaskEditor(task: task)
+            Tab("Tasks", systemImage: "checkmark.square", value: "tasks") {
+                    NavigationStack {
+                        TaskList(view: view, selected: $taskSelection)
+                            .navigationDestination(item: $taskSelection) { task in
+                                TaskEditor(task: task)
+                            }
+                            .toolbar {
+                                ToolbarItem(placement: .topBarLeading) {
+                                    Button { openMenu() } label: {
+                                        Image(systemName: "line.3.horizontal")
+                                    }
+                                    .accessibilityLabel("Lists")
+                                }
+                                ToolbarItem(placement: .topBarTrailing) {
+                                    NavigationLink { SettingsScreen() } label: {
+                                        Image(systemName: "ellipsis")
+                                    }
+                                    .accessibilityLabel("More")
+                                }
+                            }
                     }
             }
-            .tabItem { Label("Calendar", systemImage: "calendar") }
-            .tag("calendar")
-
-            NavigationStack { HabitScreen() }
-                .tabItem { Label("Habits", systemImage: "circle.grid.2x2") }
-                .tag("habits")
-
-            NavigationStack { CountdownScreen() }
-                .tabItem { Label("Countdowns", systemImage: "hourglass") }
-                .tag("countdowns")
+            Tab("Calendar", systemImage: "calendar", value: "calendar") {
+                NavigationStack {
+                    CalendarScreen(onSelect: { calendarSelection = $0 }, onMenu: { openMenu() })
+                        .navigationDestination(item: $calendarSelection) { task in
+                            TaskEditor(task: task)
+                        }
+                }
+            }
+            Tab("Habits", systemImage: "clock", value: "habits") {
+                NavigationStack { HabitScreen() }
+            }
+            Tab("Countdown", systemImage: "star", value: "countdowns") {
+                NavigationStack { CountdownScreen() }
+            }
         }
+        .overlay { menuDrawer }
         .onChange(of: tab) { _, _ in
             var transaction = Transaction()
             transaction.disablesAnimations = true
@@ -96,18 +106,41 @@ struct RootView: View {
                 calendarSelection = nil
             }
         }
-        .sheet(isPresented: $listsOpen) {
-            NavigationStack {
-                TaskSidebar(view: $view, onPick: { listsOpen = false })
-                    .navigationTitle("Lists")
-                    .navigationBarTitleDisplayMode(.inline)
-                    .toolbar {
-                        ToolbarItem(placement: .confirmationAction) {
-                            Button("Done") { listsOpen = false }
+    }
+
+    private func openMenu() {
+        withAnimation(.snappy(duration: 0.28)) { menuOpen = true }
+    }
+
+    private func closeMenu() {
+        withAnimation(.snappy(duration: 0.24)) { menuOpen = false }
+    }
+
+    @ViewBuilder
+    private var menuDrawer: some View {
+        if menuOpen {
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Color.black.opacity(0.45)
+                        .ignoresSafeArea()
+                        .onTapGesture(perform: closeMenu)
+                        .accessibilityLabel("Close menu")
+                        .accessibilityAddTraits(.isButton)
+                    TaskSidebar(view: $view, drawer: true, onPick: {
+                        tab = "tasks"
+                        closeMenu()
+                    })
+                    .frame(width: min(geo.size.width * 0.86, 360))
+                    .transition(.move(edge: .leading))
+                    .gesture(
+                        DragGesture().onEnded { value in
+                            if value.translation.width < -60 { closeMenu() }
                         }
-                    }
+                    )
+                }
             }
-            .presentationDetents([.medium, .large])
+            .transition(.opacity)
+            .zIndex(1)
         }
     }
 
@@ -196,15 +229,15 @@ struct SlatePalette {
     var scheme: ColorScheme
 
     var dark: Bool { scheme == .dark }
-    var rail: Color { dark ? rgb(0x171717) : rgb(0xEDEDED) }
-    var sidebar: Color { dark ? rgb(0x1C1C1E) : rgb(0xF5F5F5) }
-    var stage: Color { dark ? rgb(0x1C1C1E) : .white }
+    var rail: Color { dark ? rgb(0x111113) : rgb(0xEDEDED) }
+    var sidebar: Color { dark ? .black : rgb(0xF5F5F5) }
+    var stage: Color { dark ? .black : .white }
     var ink: Color { dark ? .white : rgb(0x191919) }
-    var muted: Color { dark ? rgb(0x8D8D8D) : rgb(0x8A8A8A) }
-    var line: Color { dark ? rgb(0x2A2A2A) : rgb(0xEDEDED) }
-    var blue: Color { dark ? rgb(0x4E81FB) : rgb(0x4772FA) }
-    var active: Color { dark ? rgb(0x3A3A3A) : rgb(0xE8E8E8) }
-    var chip: Color { dark ? rgb(0x2C2C2E) : rgb(0xF3F3F3) }
+    var muted: Color { dark ? rgb(0x8E8E93) : rgb(0x8A8A8A) }
+    var line: Color { dark ? rgb(0x2C2C2E) : rgb(0xEDEDED) }
+    var blue: Color { rgb(0x4C8DFF) }
+    var active: Color { dark ? rgb(0x12315F) : rgb(0xE8E8E8) }
+    var chip: Color { dark ? rgb(0x1C1C1E) : rgb(0xF3F3F3) }
 
     private func rgb(_ hex: UInt) -> Color {
         Color(
@@ -263,83 +296,465 @@ struct AppRail: View {
     }
 }
 
-struct TaskSidebar: View {
+struct QuickAddComposer: View {
     @Environment(PlannerStore.self) private var store
-    @Binding var view: String
-    var showsStages = false
-    var onPick: () -> Void = {}
-    @State private var listName = ""
+    @Environment(\.colorScheme) private var scheme
+    var listId: String?
+    var defaultDay: String?
+    var onAdded: (TaskRecord) -> Void = { _ in }
+    var onClose: () -> Void
+    @State private var draft = ""
+    @State private var notes = ""
+    @State private var pickedDay: String??
+    @State private var priority: Int?
+    @State private var pickedList: String??
+    @State private var tagIds: [String] = []
+    @FocusState private var focus: Field?
+
+    private enum Field { case title, notes }
+
+    private var palette: SlatePalette { SlatePalette(scheme: scheme) }
+    private var parsed: QuickAdd { parseQuickAdd(draft) }
+    private var day: String? {
+        if let pickedDay { return pickedDay }
+        return parsed.dueOn ?? defaultDay
+    }
+    private var list: String? {
+        if let pickedList { return pickedList }
+        return listId
+    }
+    private var ready: Bool { !parsed.title.trimmingCharacters(in: .whitespaces).isEmpty }
 
     var body: some View {
-        let lists = store.lists.filter { $0.deletedAt == nil }.sorted { $0.sort < $1.sort }
-        let index = store.taskIndex
-        ScrollView {
-            VStack(alignment: .leading, spacing: 2) {
-                pick("inbox", "Inbox", "tray", index.inbox.count)
-                pick("today", "Today", "sun.max", index.today.count)
-                pick("tomorrow", "Tomorrow", "sun.horizon", index.tomorrow.count)
-                pick("week", "Next 7 Days", "calendar", index.week.count)
-                Text("Lists")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.secondary)
-                    .padding(.horizontal, 16)
-                    .padding(.top, 16)
-                    .padding(.bottom, 4)
-                ForEach(lists) { list in
-                    Button { choose("list:\(list.id)") } label: {
-                        HStack {
-                            Label {
-                                Text(list.name)
-                            } icon: {
-                                Image(systemName: "circle.fill").foregroundStyle(Color(hex: list.color))
-                            }
-                            Spacer(minLength: 8)
-                            countLabel(index.byList[list.id]?.count ?? 0)
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 9)
+        ZStack(alignment: .bottom) {
+            Color.black.opacity(0.45)
+                .ignoresSafeArea()
+                .onTapGesture(perform: onClose)
+                .accessibilityLabel("Close")
+                .accessibilityAddTraits(.isButton)
+            VStack(alignment: .leading, spacing: 10) {
+                ZStack(alignment: .topLeading) {
+                    Text(highlighted)
+                        .font(.title3)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(view == "list:\(list.id)" ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 8))
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.horizontal, 8)
-                    .contextMenu {
-                        Button("Delete", role: .destructive) { delete(list) }
+                        .accessibilityHidden(true)
+                    TextField("What would you like to do?", text: $draft, axis: .vertical)
+                        .font(.title3)
+                        .foregroundStyle(draft.isEmpty ? palette.muted : .clear)
+                        .tint(palette.blue)
+                        .focused($focus, equals: .title)
+                        .submitLabel(.send)
+                        .onChange(of: draft) { _, next in
+                            if next.contains("\n") {
+                                draft = next.replacingOccurrences(of: "\n", with: "")
+                                submit()
+                            }
+                        }
+                }
+                TextField("Description", text: $notes, axis: .vertical)
+                    .font(.subheadline)
+                    .foregroundStyle(palette.muted)
+                    .lineLimit(1...4)
+                    .focused($focus, equals: .notes)
+                toolbar
+            }
+            .padding(.horizontal, 18)
+            .padding(.top, 16)
+            .padding(.bottom, 10)
+            .background(palette.chip, in: UnevenRoundedRectangle(topLeadingRadius: 22, topTrailingRadius: 22))
+            .transition(.move(edge: .bottom))
+        }
+        .onAppear { focus = .title }
+    }
+
+    private var highlighted: AttributedString {
+        var text = AttributedString(draft)
+        text.foregroundColor = palette.ink
+        for token in parsed.tokens {
+            let chars = text.characters
+            guard token.end <= chars.count else { continue }
+            let start = chars.index(chars.startIndex, offsetBy: token.start)
+            let end = chars.index(chars.startIndex, offsetBy: token.end)
+            text[start..<end].foregroundColor = palette.blue
+            text[start..<end].backgroundColor = palette.blue.opacity(0.22)
+        }
+        return text
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 18) {
+            Menu {
+                Button("Today") { pickedDay = .some(Day.iso()) }
+                Button("Tomorrow") { pickedDay = .some(Day.add(Day.iso(), days: 1)) }
+                Button("Next week") { pickedDay = .some(Day.add(Day.iso(), days: 7)) }
+                Button("No date") { pickedDay = .some(nil) }
+            } label: {
+                HStack(spacing: 6) {
+                    Image(systemName: "calendar")
+                    if let day { Text(Day.label(day)).font(.subheadline.weight(.semibold)) }
+                    if let time = parsed.dueTime { Text(Day.clock(time)).font(.subheadline.weight(.semibold)) }
+                }
+                .foregroundStyle(day == nil ? palette.muted : palette.blue)
+            }
+            Menu {
+                Button("Inbox") { pickedList = .some(nil) }
+                ForEach(store.lists.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.sort < $1.sort }) { item in
+                    Button(item.name) { pickedList = .some(item.id) }
+                }
+            } label: {
+                Image(systemName: "tray.and.arrow.down")
+                    .foregroundStyle(list == nil ? palette.muted : palette.blue)
+            }
+            Menu {
+                Button("High") { priority = 3 }
+                Button("Medium") { priority = 2 }
+                Button("Low") { priority = 1 }
+                Button("None") { priority = 0 }
+            } label: {
+                Image(systemName: "flag")
+                    .foregroundStyle((priority ?? parsed.priority) > 0 ? palette.blue : palette.muted)
+            }
+            Menu {
+                ForEach(store.tags.filter { $0.deletedAt == nil }) { tag in
+                    Button {
+                        if tagIds.contains(tag.id) { tagIds.removeAll { $0 == tag.id } } else { tagIds.append(tag.id) }
+                    } label: {
+                        Label(tag.name, systemImage: tagIds.contains(tag.id) ? "checkmark" : "number")
                     }
                 }
-                TextField("Add list", text: $listName)
-                    .textFieldStyle(.plain)
-                    .padding(.horizontal, 20)
-                    .padding(.vertical, 10)
-                    .onSubmit(addList)
-                pick("completed", "Completed", "checkmark.circle", index.completed.count)
-                    .padding(.top, 8)
-                if showsStages {
-                    pick("calendar", "Calendar", "calendar")
-                    pick("habits", "Habits", "circle.grid.2x2")
-                    pick("countdowns", "Countdowns", "hourglass")
-                    pick("settings", "Settings", "gearshape")
+            } label: {
+                Image(systemName: "tag")
+                    .foregroundStyle(tagIds.isEmpty && parsed.tagNames.isEmpty ? palette.muted : palette.blue)
+            }
+            Spacer()
+            Button(action: submit) {
+                Image(systemName: "arrow.up")
+                    .font(.body.weight(.bold))
+                    .foregroundStyle(.white)
+                    .frame(width: 34, height: 34)
+                    .background(ready ? palette.blue : palette.muted.opacity(0.4), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .disabled(!ready)
+            .accessibilityLabel("Add task")
+        }
+        .font(.body)
+        .foregroundStyle(palette.muted)
+        .padding(.top, 4)
+    }
+
+    private func submit() {
+        let result = parsed
+        guard !result.title.trimmingCharacters(in: .whitespaces).isEmpty else { return }
+        let named = result.tagNames.map { name in
+            if let existing = store.tags.first(where: { $0.deletedAt == nil && $0.name.lowercased() == name.lowercased() }) {
+                return existing.id
+            }
+            let tag = TagRecord(id: UUID().uuidString, name: name, color: "#8E4EC6", updatedAt: "", deletedAt: nil)
+            store.saveTag(tag)
+            return tag.id
+        }
+        let task = TaskRecord(
+            id: UUID().uuidString, title: result.title, notes: notes, listId: list, sectionId: nil, priority: priority ?? result.priority,
+            tagIds: Array(Set(named + tagIds)), dueOn: day, dueTime: result.dueTime, repeatRule: result.repeatRule, remindMinutesBefore: nil,
+            completedAt: nil, subtasks: [], sort: Date().timeIntervalSince1970, updatedAt: "", deletedAt: nil
+        )
+        store.saveTask(task)
+        draft = ""
+        notes = ""
+        pickedDay = nil
+        priority = nil
+        tagIds = []
+        onAdded(task)
+    }
+}
+
+struct WeekPager: View {
+    @Environment(\.colorScheme) private var scheme
+    @Binding var day: String
+    var weekNumbers = false
+    var marked: (String) -> Bool = { _ in false }
+    @State private var page: String?
+
+    private var palette: SlatePalette { SlatePalette(scheme: scheme) }
+
+    private static func sunday(_ value: String) -> String {
+        let weekday = Calendar.current.component(.weekday, from: Day.parse(value)) - 1
+        return Day.add(value, days: -weekday)
+    }
+
+    var body: some View {
+        let anchor = Self.sunday(Day.iso())
+        let weeks = (-52...52).map { Day.add(anchor, days: $0 * 7) }
+        ScrollView(.horizontal, showsIndicators: false) {
+            LazyHStack(spacing: 0) {
+                ForEach(weeks, id: \.self) { start in
+                    HStack(spacing: 0) {
+                        ForEach(0..<7, id: \.self) { offset in
+                            cell(Day.add(start, days: offset), first: offset == 0)
+                        }
+                    }
+                    .containerRelativeFrame(.horizontal)
+                    .id(start)
                 }
             }
-            .padding(.vertical, 8)
+            .scrollTargetLayout()
         }
-        .background(Color(.secondarySystemBackground))
+        .scrollTargetBehavior(.paging)
+        .scrollPosition(id: $page)
+        .frame(height: 68)
+        .onAppear { page = Self.sunday(day) }
+        .onChange(of: day) { _, next in
+            let start = Self.sunday(next)
+            if page != start { withAnimation { page = start } }
+        }
+        .onChange(of: page) { _, next in
+            guard let next, Self.sunday(day) != next else { return }
+            let weekday = Calendar.current.component(.weekday, from: Day.parse(day)) - 1
+            day = Day.add(next, days: weekday)
+        }
+    }
+
+    private static func weekNumber(_ value: String) -> Int {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.firstWeekday = 1
+        calendar.minimumDaysInFirstWeek = 1
+        return calendar.component(.weekOfYear, from: Day.parse(value))
+    }
+
+    private func cell(_ item: String, first: Bool) -> some View {
+        Button { day = item } label: {
+            VStack(spacing: 4) {
+                Text(Day.parse(item).formatted(.dateTime.weekday(.narrow)))
+                    .font(.caption2)
+                    .foregroundStyle(palette.muted)
+                Text(String(Int(item.suffix(2)) ?? 0))
+                    .font(.system(size: 16, weight: item == day ? .bold : .semibold))
+                    .foregroundStyle(item == day ? Color.white : palette.ink)
+                    .frame(width: 34, height: 34)
+                    .background(item == day ? palette.blue : .clear, in: Circle())
+                if weekNumbers && first && !marked(item) {
+                    Text("W\(Self.weekNumber(item))")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(palette.muted)
+                        .frame(height: 8)
+                } else {
+                    Circle().fill(marked(item) ? palette.muted : .clear).frame(width: 4, height: 4).frame(height: 8)
+                }
+            }
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+struct MonthPager: View {
+    @Environment(\.colorScheme) private var scheme
+    @Binding var day: String
+    var marked: (String) -> Bool = { _ in false }
+    var onPick: () -> Void = {}
+    @State private var page: String?
+
+    private var palette: SlatePalette { SlatePalette(scheme: scheme) }
+
+    private static func monthStart(_ value: String) -> String {
+        String(value.prefix(7)) + "-01"
+    }
+
+    private static func addMonths(_ value: String, _ count: Int) -> String {
+        Day.iso(Calendar.current.date(byAdding: .month, value: count, to: Day.parse(value)) ?? .now)
+    }
+
+    var body: some View {
+        let current = Self.monthStart(Day.iso())
+        let months = (-24...24).map { Self.addMonths(current, $0) }
+        VStack(spacing: 6) {
+            HStack(spacing: 0) {
+                ForEach(["S", "M", "T", "W", "T", "F", "S"].indices, id: \.self) { index in
+                    Text(["S", "M", "T", "W", "T", "F", "S"][index])
+                        .font(.caption2)
+                        .foregroundStyle(palette.muted)
+                        .frame(maxWidth: .infinity)
+                }
+            }
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 0) {
+                    ForEach(months, id: \.self) { month in
+                        grid(month)
+                            .containerRelativeFrame(.horizontal)
+                            .id(month)
+                    }
+                }
+                .scrollTargetLayout()
+            }
+            .scrollTargetBehavior(.paging)
+            .scrollPosition(id: $page)
+            .frame(height: 6 * 44)
+        }
+        .onAppear { page = Self.monthStart(day) }
+        .onChange(of: day) { _, next in
+            let start = Self.monthStart(next)
+            if page != start { withAnimation { page = start } }
+        }
+        .onChange(of: page) { _, next in
+            guard let next, Self.monthStart(day) != next else { return }
+            day = next == Self.monthStart(Day.iso()) ? Day.iso() : next
+        }
+    }
+
+    private func grid(_ month: String) -> some View {
+        let weekday = Calendar.current.component(.weekday, from: Day.parse(month)) - 1
+        let origin = Day.add(month, days: -weekday)
+        return VStack(spacing: 0) {
+            ForEach(0..<6, id: \.self) { row in
+                HStack(spacing: 0) {
+                    ForEach(0..<7, id: \.self) { column in
+                        cell(Day.add(origin, days: row * 7 + column), inMonth: month)
+                    }
+                }
+                .frame(height: 44)
+            }
+        }
+    }
+
+    private func cell(_ item: String, inMonth month: String) -> some View {
+        let outside = !item.hasPrefix(String(month.prefix(7)))
+        let selected = item == day
+        let today = item == Day.iso()
+        return Button {
+            day = item
+            onPick()
+        } label: {
+            VStack(spacing: 3) {
+                Text(String(Int(item.suffix(2)) ?? 0))
+                    .font(.system(size: 16, weight: selected || today ? .bold : .semibold))
+                    .foregroundStyle(selected ? Color.white : (today ? palette.blue : (outside ? palette.muted : palette.ink)))
+                    .frame(width: 34, height: 34)
+                    .background(selected ? palette.blue : .clear, in: Circle())
+                Circle().fill(marked(item) ? palette.muted : .clear).frame(width: 4, height: 4)
+            }
+            .frame(maxWidth: .infinity)
+            .opacity(outside && !selected ? 0.5 : 1)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(Day.label(item))
+    }
+}
+
+struct TaskSidebar: View {
+    @Environment(PlannerStore.self) private var store
+    @Environment(\.colorScheme) private var scheme
+    @Binding var view: String
+    var showsStages = false
+    var drawer = false
+    var onPick: () -> Void = {}
+    @State private var listName = ""
+    @State private var adding = false
+    @State private var archivedOpen = false
+
+    private var palette: SlatePalette { SlatePalette(scheme: scheme) }
+
+    var body: some View {
+        let lists = store.lists.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.sort < $1.sort }
+        let archived = store.lists.filter { $0.deletedAt == nil && $0.archivedAt != nil }.sorted { $0.sort < $1.sort }
+        let tags = store.tags.filter { $0.deletedAt == nil }
+        let index = store.taskIndex
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    pick("today", "Today", "calendar", index.today.count)
+                    pick("tomorrow", "Tomorrow", "sunrise", index.tomorrow.count)
+                    pick("week", "Next 7 Days", "calendar", index.week.count)
+                    pick("inbox", "Inbox", "tray", index.inbox.count)
+                    pick("overdue", "Overdue", "exclamationmark.circle", index.overdue.count)
+                    ForEach(lists) { list in
+                        Button { choose("list:\(list.id)") } label: {
+                            HStack(spacing: 12) {
+                                Image(systemName: "list.bullet").foregroundStyle(Color(hex: list.color))
+                                Text(list.name)
+                                Spacer(minLength: 8)
+                                countLabel(index.byList[list.id]?.count ?? 0)
+                            }
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(view == "list:\(list.id)" ? palette.active : .clear, in: RoundedRectangle(cornerRadius: 14))
+                        }
+                        .buttonStyle(.plain)
+                        .padding(.horizontal, 10)
+                        .contextMenu {
+                            Button(list.archivedAt == nil ? "Archive" : "Unarchive") { archive(list) }
+                            Button("Delete", role: .destructive) { delete(list) }
+                        }
+                    }
+                    Button { archivedOpen.toggle() } label: {
+                        HStack(spacing: 12) {
+                            Image(systemName: "folder").foregroundStyle(palette.blue)
+                            Text("Archived Lists")
+                            Spacer()
+                            Image(systemName: "chevron.right").font(.caption.weight(.semibold)).foregroundStyle(palette.muted)
+                        }
+                        .padding(.horizontal, 14)
+                        .padding(.vertical, 12)
+                    }
+                    .buttonStyle(.plain)
+                    .padding(.horizontal, 10)
+                    if archivedOpen {
+                        ForEach(archived) { list in
+                            pick("list:\(list.id)", list.name, "archivebox", index.byList[list.id]?.count ?? 0)
+                        }
+                    }
+                    pick("completed", "Completed", "checkmark.circle.fill", index.completed.count)
+                    pick("trash", "Trash", "trash", index.trash.count)
+                    ForEach(tags) { tag in
+                        pick("tag:\(tag.id)", tag.name, "number", index.byTag[tag.id]?.count ?? 0)
+                    }
+                    if showsStages {
+                        pick("calendar", "Calendar", "calendar")
+                        pick("habits", "Habits", "clock")
+                        pick("countdowns", "Countdowns", "star")
+                        pick("settings", "Settings", "gearshape")
+                    }
+                }
+                .padding(.vertical, 12)
+            }
+            if adding {
+                TextField("List name", text: $listName)
+                    .textFieldStyle(.roundedBorder)
+                    .padding(.horizontal, 16)
+                    .onSubmit { addList(); adding = false }
+            }
+            HStack {
+                Button { adding = true } label: {
+                    Label("Add", systemImage: "plus")
+                }
+                .buttonStyle(.plain)
+                Spacer()
+            }
+            .padding(.horizontal, 22)
+            .padding(.vertical, 14)
+        }
+        .background((drawer ? palette.chip : palette.stage).ignoresSafeArea())
+        .foregroundStyle(palette.ink)
     }
 
     private func pick(_ id: String, _ title: String, _ symbol: String, _ total: Int = 0) -> some View {
         Button { choose(id) } label: {
-            HStack {
-                Label(title, systemImage: symbol)
+            HStack(spacing: 12) {
+                Image(systemName: symbol).foregroundStyle(palette.blue).frame(width: 24)
+                Text(title)
                 Spacer(minLength: 8)
                 countLabel(total)
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 9)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(view == id ? Color.accentColor.opacity(0.16) : .clear, in: RoundedRectangle(cornerRadius: 8))
+            .background(view == id ? palette.active : .clear, in: RoundedRectangle(cornerRadius: 14))
         }
         .buttonStyle(.plain)
-        .padding(.horizontal, 8)
+        .padding(.horizontal, 10)
     }
 
     private func countLabel(_ total: Int) -> some View {
@@ -355,6 +770,12 @@ struct TaskSidebar: View {
             view = id
             onPick()
         }
+    }
+
+    private func archive(_ list: ListRecord) {
+        var copy = list
+        copy.archivedAt = list.archivedAt == nil ? ISO8601DateFormatter().string(from: .now) : nil
+        store.saveList(copy)
     }
 
     private func delete(_ list: ListRecord) {
@@ -515,8 +936,9 @@ struct TaskList: View {
     @Environment(\.colorScheme) private var scheme
     var view: String
     @Binding var selected: TaskRecord?
-    @State private var draft = ""
     @State private var sectionName = ""
+    @State private var convertError: String?
+    @State private var addOpen = false
 
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
 
@@ -525,33 +947,26 @@ struct TaskList: View {
         let list = view.hasPrefix("list:") ? store.lists.first { $0.id == String(view.dropFirst(5)) } : nil
         VStack(spacing: 0) {
         List {
-            if view != "completed" {
-                composer
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(palette.chip)
-                    .listRowSeparator(.hidden)
+            if open.isEmpty {
+                Text(view == "completed" ? "No completed tasks." : "Nothing here yet.").foregroundStyle(.secondary)
             }
-            if open.isEmpty { Text(view == "completed" ? "No completed tasks." : "Nothing here yet.").foregroundStyle(.secondary) }
             if let list {
                 let loose = open.filter { $0.sectionId == nil }
-                if !loose.isEmpty {
-                    Section("Tasks") {
-                        ForEach(loose) { task in taskRow(task) }
-                    }
+                Section {
+                    ForEach(loose) { task in taskRow(task) }
                 }
                 ForEach(list.sections.sorted { $0.sort < $1.sort }) { section in
-                    Section(section.name) {
-                        ForEach(open.filter { $0.sectionId == section.id }) { task in taskRow(task) }
+                    let rows = open.filter { $0.sectionId == section.id }
+                    if !rows.isEmpty {
+                        Section(section.name) {
+                            ForEach(rows) { task in taskRow(task) }
+                        }
                     }
                 }
-                Section {
-                    TextField("Section name", text: $sectionName)
-                        .onSubmit { addSection(list) }
-                    Button("Add section") { addSection(list) }
-                        .disabled(sectionName.trimmingCharacters(in: .whitespaces).isEmpty)
-                }
             } else {
-                ForEach(open) { task in taskRow(task) }
+                Section {
+                    ForEach(open) { task in taskRow(task) }
+                }
             }
         }
         .listStyle(.insetGrouped)
@@ -563,36 +978,49 @@ struct TaskList: View {
         }
         .background(palette.stage)
         .foregroundStyle(palette.ink)
+        .overlay(alignment: .bottomTrailing) {
+            if view != "completed" && view != "trash" {
+                Button { addOpen = true } label: {
+                    Image(systemName: "plus")
+                        .font(.title2.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .background(palette.blue, in: Circle())
+                        .shadow(color: palette.blue.opacity(0.35), radius: 12, y: 6)
+                }
+                .padding(.trailing, 18)
+                .padding(.bottom, 18)
+                .accessibilityLabel("Add")
+            }
+        }
+        .overlay {
+            if addOpen {
+                QuickAddComposer(
+                    listId: view.hasPrefix("list:") ? String(view.dropFirst(5)) : nil,
+                    defaultDay: defaultDay,
+                    onClose: { withAnimation(.snappy(duration: 0.22)) { addOpen = false } }
+                )
+            }
+        }
+        .toolbar(addOpen ? .hidden : .visible, for: .tabBar)
+        .animation(.snappy(duration: 0.22), value: addOpen)
+        .alert("Could not make event", isPresented: Binding(get: { convertError != nil }, set: { if !$0 { convertError = nil } })) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(convertError ?? "")
+        }
+    }
+
+    private var defaultDay: String? {
+        switch view {
+        case "today": return Day.iso()
+        case "tomorrow": return Day.add(Day.iso(), days: 1)
+        default: return nil
+        }
     }
 
     private var visibleTasks: [TaskRecord] {
         store.taskIndex.tasks(for: view)
-    }
-
-    private var composer: some View {
-        HStack(spacing: 8) {
-            TextField("What would you like to do?", text: $draft)
-                .textFieldStyle(.plain)
-                .submitLabel(.done)
-                .onSubmit(add)
-            if let due = parseQuickAdd(draft).dueOn {
-                Text(Day.label(due))
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(palette.blue)
-                    .lineLimit(1)
-            }
-            Button(action: add) {
-                Image(systemName: "plus")
-                    .font(.body.weight(.semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 28, height: 28)
-                    .background(palette.blue, in: Circle())
-            }
-            .buttonStyle(.plain)
-        }
-        .padding(.horizontal, 16)
-        .frame(height: 44)
-        .background(palette.chip)
     }
 
     private var title: String {
@@ -601,6 +1029,11 @@ struct TaskList: View {
         if view == "tomorrow" { return "Tomorrow" }
         if view == "week" { return "Next 7 Days" }
         if view == "completed" { return "Completed" }
+        if view == "overdue" { return "Overdue" }
+        if view == "trash" { return "Trash" }
+        if view.hasPrefix("tag:") {
+            return store.tags.first { $0.id == String(view.dropFirst(4)) }?.name ?? "Tagged"
+        }
         if view.hasPrefix("list:") {
             return store.lists.first { $0.id == String(view.dropFirst(5)) }?.name ?? "List"
         }
@@ -610,9 +1043,9 @@ struct TaskList: View {
     private func taskRow(_ task: TaskRecord) -> some View {
         HStack {
             Button { store.complete(task) } label: {
-                Image(systemName: task.completedAt == nil ? "circle" : "checkmark.circle.fill")
+                Image(systemName: task.completedAt == nil ? "square" : "checkmark.square.fill")
                     .font(.title3)
-                    .foregroundStyle(task.completedAt == nil ? Color.secondary : Color.blue)
+                    .foregroundStyle(task.completedAt == nil ? Color.secondary : palette.blue)
             }
             .buttonStyle(.plain)
             Text(task.title)
@@ -631,32 +1064,24 @@ struct TaskList: View {
         .listRowBackground(palette.chip)
         .contentShape(Rectangle())
         .onTapGesture { selected = task }
+        .swipeActions(edge: .leading) {
+            Button("Move") { selected = task }.tint(.gray)
+            if task.deletedAt == nil && store.googleAccount?.connected == true {
+                Button("Event", systemImage: "calendar.badge.plus") {
+                    Task { convertError = await store.convertToEvent(task) }
+                }
+                .tint(.orange)
+            }
+        }
         .swipeActions {
+            Button(task.deletedAt == nil ? "Delete" : "Restore", role: .destructive) {
+                var next = task
+                next.deletedAt = task.deletedAt == nil ? ISO8601DateFormatter().string(from: .now) : nil
+                store.saveTask(next)
+            }
             Button(task.completedAt == nil ? "Complete" : "Restore") { store.complete(task) }
                 .tint(.blue)
         }
-    }
-
-    private func add() {
-        let parsed = parseQuickAdd(draft)
-        guard !parsed.title.isEmpty else { return }
-        let listId = view.hasPrefix("list:") ? String(view.dropFirst(5)) : nil
-        let tagIds = parsed.tagNames.map { name in
-            if let existing = store.tags.first(where: { $0.deletedAt == nil && $0.name.lowercased() == name.lowercased() }) {
-                return existing.id
-            }
-            let tag = TagRecord(id: UUID().uuidString, name: name, color: "#8E4EC6", updatedAt: "", deletedAt: nil)
-            store.saveTag(tag)
-            return tag.id
-        }
-        let task = TaskRecord(
-            id: UUID().uuidString, title: parsed.title, notes: "", listId: listId, sectionId: nil, priority: parsed.priority,
-            tagIds: tagIds, dueOn: parsed.dueOn, dueTime: parsed.dueTime, repeatRule: parsed.repeatRule, remindMinutesBefore: nil,
-            completedAt: nil, subtasks: [], sort: Date().timeIntervalSince1970, updatedAt: "", deletedAt: nil
-        )
-        store.saveTask(task)
-        draft = ""
-        selected = task
     }
 
     private func addSection(_ list: ListRecord) {
@@ -671,15 +1096,50 @@ struct TaskList: View {
 
 struct TaskEditor: View {
     @Environment(PlannerStore.self) private var store
+    @Environment(\.dismiss) private var dismiss
     var task: TaskRecord
+    @State private var converting = false
+    @State private var convertError: String?
 
     private var current: TaskRecord { store.tasks.first { $0.id == task.id } ?? task }
 
     var body: some View {
         Form {
+            if current.deletedAt == nil && store.googleAccount?.connected == true {
+                Section {
+                    Button {
+                        Task {
+                            converting = true
+                            convertError = await store.convertToEvent(current)
+                            converting = false
+                            if convertError == nil { dismiss() }
+                        }
+                    } label: {
+                        HStack {
+                            Label("Make Google Calendar event", systemImage: "calendar.badge.plus")
+                            if converting {
+                                Spacer()
+                                ProgressView()
+                            }
+                        }
+                    }
+                    .disabled(converting)
+                    if let convertError {
+                        Text(convertError).font(.footnote).foregroundStyle(.red)
+                    }
+                } footer: {
+                    Text("Creates the event on \(current.dueOn.map { Day.label($0) } ?? "today")\(current.dueTime.map { " at \(Day.clock($0))" } ?? ", all day") and moves this task to Trash.")
+                }
+            }
             TextField("Title", text: binding(\.title, ""))
-            TextField("Date", text: binding(\.dueOn, ""))
-            TextField("Time", text: binding(\.dueTime, ""))
+            DatePicker("Date", selection: dateBinding, displayedComponents: .date)
+            DatePicker("Time", selection: timeBinding, displayedComponents: .hourAndMinute)
+            Picker("List", selection: listBinding) {
+                Text("Inbox").tag("")
+                ForEach(store.lists.filter { $0.deletedAt == nil }) { list in
+                    Text(list.name).tag(list.id)
+                }
+            }
             Picker("Priority", selection: binding(\.priority, 0)) {
                 Text("None").tag(0)
                 Text("Low").tag(1)
@@ -703,9 +1163,39 @@ struct TaskEditor: View {
             Section("Notes") {
                 TextField("Notes", text: binding(\.notes, ""), axis: .vertical)
             }
+            if !store.tags.filter({ $0.deletedAt == nil }).isEmpty {
+                Section("Tags") {
+                    ForEach(store.tags.filter { $0.deletedAt == nil }) { tag in
+                        Button {
+                            var next = current
+                            next.tagIds = next.tagIds.contains(tag.id) ? next.tagIds.filter { $0 != tag.id } : next.tagIds + [tag.id]
+                            store.saveTask(next)
+                        } label: {
+                            Label(tag.name, systemImage: current.tagIds.contains(tag.id) ? "checkmark.circle.fill" : "circle")
+                        }
+                    }
+                }
+            }
             Section("Subtasks") {
                 ForEach(current.subtasks) { subtask in
-                    Text(subtask.title)
+                    Button {
+                        var next = current
+                        next.subtasks = next.subtasks.map { item in
+                            var copy = item
+                            if copy.id == subtask.id { copy.done.toggle() }
+                            return copy
+                        }
+                        store.saveTask(next)
+                    } label: {
+                        Label(subtask.title, systemImage: subtask.done ? "checkmark.circle.fill" : "circle")
+                    }
+                    .swipeActions {
+                        Button("Delete", role: .destructive) {
+                            var next = current
+                            next.subtasks.removeAll { $0.id == subtask.id }
+                            store.saveTask(next)
+                        }
+                    }
                 }
                 Button("Add subtask") {
                     var next = current
@@ -720,6 +1210,35 @@ struct TaskEditor: View {
             }
         }
         .navigationTitle("Details")
+    }
+
+    private var dateBinding: Binding<Date> {
+        Binding(get: { Day.parse(current.dueOn ?? Day.iso()) }, set: { value in
+            var next = current
+            next.dueOn = Day.iso(value)
+            store.saveTask(next)
+        })
+    }
+
+    private var timeBinding: Binding<Date> {
+        Binding(get: {
+            let bits = (current.dueTime ?? "09:00").split(separator: ":").compactMap { Int($0) }
+            return Calendar.current.date(bySettingHour: bits.first ?? 9, minute: bits.dropFirst().first ?? 0, second: 0, of: .now) ?? .now
+        }, set: { value in
+            let parts = Calendar.current.dateComponents([.hour, .minute], from: value)
+            var next = current
+            next.dueTime = String(format: "%02d:%02d", parts.hour ?? 0, parts.minute ?? 0)
+            store.saveTask(next)
+        })
+    }
+
+    private var listBinding: Binding<String> {
+        Binding(get: { current.listId ?? "" }, set: { value in
+            var next = current
+            next.listId = value.isEmpty ? nil : value
+            next.sectionId = nil
+            store.saveTask(next)
+        })
     }
 
     private var repeatBinding: Binding<String> {
@@ -809,11 +1328,15 @@ struct CalendarScreen: View {
     @Environment(\.colorScheme) private var scheme
     @Environment(\.horizontalSizeClass) private var size
     var onSelect: (TaskRecord) -> Void
+    var onMenu: (() -> Void)? = nil
     @AppStorage("slate.calWeeks") private var weeks = 4
-    @State private var mode = "month"
-    @State private var anchor = Day.iso()
+    @AppStorage("slate.calMode") private var mode = "focus"
+    @AppStorage("slate.calAnchor") private var anchor = Day.iso()
+    @AppStorage("slate.calOpenedOn") private var openedOn = ""
+    @State private var monthOpen = false
     @State private var google: [GoogleEvent] = []
     @State private var pinchBase: CGFloat = 1
+    @State private var addOpen = false
 
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
     private let hourHeight: CGFloat = 48
@@ -825,6 +1348,8 @@ struct CalendarScreen: View {
             header
             Group {
                 switch mode {
+                case "focus":
+                    phoneFocus(tasksByDay: tasksByDay, eventsByDay: eventsByDay)
                 case "list":
                     agenda(tasksByDay: tasksByDay, eventsByDay: eventsByDay, days: 14)
                 case "day", "3day", "week":
@@ -837,16 +1362,106 @@ struct CalendarScreen: View {
         }
         .background(palette.stage)
         .foregroundStyle(palette.ink)
+        .overlay(alignment: .bottomTrailing) {
+            Button { addOpen = true } label: {
+                Image(systemName: "plus")
+                    .font(.title2.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .frame(width: 56, height: 56)
+                    .background(palette.blue, in: Circle())
+                    .shadow(color: palette.blue.opacity(0.35), radius: 12, y: 6)
+            }
+            .padding(.trailing, 18)
+            .padding(.bottom, 18)
+            .accessibilityLabel("Add task")
+        }
+        .overlay {
+            if addOpen {
+                QuickAddComposer(
+                    listId: nil,
+                    defaultDay: anchor,
+                    onClose: { withAnimation(.snappy(duration: 0.22)) { addOpen = false } }
+                )
+            }
+        }
+        .toolbar(addOpen ? .hidden : .visible, for: .tabBar)
+        .animation(.snappy(duration: 0.22), value: addOpen)
         .toolbar(.hidden, for: .navigationBar)
         .task(id: "\(rangeKey)|\(store.googleGeneration)") { await loadGoogle() }
-        .onAppear { weeks = min(8, max(1, weeks)) }
+        .onAppear {
+            weeks = min(8, max(1, weeks))
+            if size != .compact && mode == "focus" { mode = "month" }
+            if openedOn != Day.iso() {
+                anchor = Day.iso()
+                openedOn = Day.iso()
+            }
+        }
     }
 
+    @ViewBuilder
     private var header: some View {
+        if size == .compact && mode == "focus" {
+            phoneHeader
+        } else {
+            standardHeader
+        }
+    }
+
+    private var phoneHeader: some View {
+        HStack {
+            Button { onMenu?() } label: {
+                Image(systemName: "line.3.horizontal")
+                    .font(.body.weight(.semibold))
+                    .frame(width: 44, height: 44)
+                    .glassEffect(.regular.interactive(), in: Circle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Lists")
+            Spacer()
+            Button { anchor = Day.iso() } label: {
+                VStack(spacing: 1) {
+                    Text(Day.parse(anchor).formatted(.dateTime.month(.wide))).font(.headline)
+                    Text(anchor == Day.iso() ? "Today" : Day.label(anchor)).font(.subheadline).foregroundStyle(palette.muted)
+                }
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Jump to today")
+            Spacer()
+            HStack(spacing: 0) {
+                Button { mode = "month" } label: {
+                    Image(systemName: "rectangle.split.3x3")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("Month")
+                Menu {
+                    Button("Month") { mode = "month" }
+                    Button("Week") { mode = "week" }
+                    Button("Day") { mode = "day" }
+                    Button("List") { mode = "list" }
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .frame(width: 44, height: 44)
+                }
+                .accessibilityLabel("More views")
+            }
+            .font(.body.weight(.semibold))
+            .padding(.horizontal, 4)
+            .glassEffect(.regular.interactive(), in: Capsule())
+            .buttonStyle(.plain)
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+    }
+
+    private var standardHeader: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
                 Text(monthTitle).font(.title2.bold())
                 Spacer()
+                if size == .compact {
+                    Button { mode = "focus" } label: { Text("Agenda").font(.subheadline.weight(.semibold)) }
+                }
                 Button { anchor = Day.iso() } label: { Text("Today").font(.subheadline.weight(.semibold)) }
                 Button { shift(-1) } label: { Image(systemName: "chevron.left") }
                 Button { shift(1) } label: { Image(systemName: "chevron.right") }
@@ -905,6 +1520,10 @@ struct CalendarScreen: View {
             return "\(anchor)|\(Day.add(anchor, days: 1))"
         case "list":
             return "\(anchor)|\(Day.add(anchor, days: 14))"
+        case "focus":
+            let weekday = Calendar.current.component(.weekday, from: Day.parse(anchor)) - 1
+            let start = Day.add(anchor, days: -weekday)
+            return "\(start)|\(Day.add(start, days: 7))"
         default:
             let days = gridDays
             return "\(days.first ?? anchor)|\(Day.add(days.last ?? anchor, days: 1))"
@@ -923,10 +1542,11 @@ struct CalendarScreen: View {
     }
 
     private func loadGoogle() async {
-        await store.refreshGoogle()
         let parts = rangeKey.split(separator: "|").map(String.init)
         guard parts.count == 2 else { return }
-        google = await store.googleEvents(start: parts[0], end: parts[1])
+        google = store.cachedGoogleEvents(start: parts[0], end: parts[1])
+        let fetched = await store.googleEvents(start: parts[0], end: parts[1])
+        if !Task.isCancelled { google = fetched }
     }
 
     private var weekZoom: some Gesture {
@@ -944,41 +1564,208 @@ struct CalendarScreen: View {
             .onEnded { _ in pinchBase = 1 }
     }
 
-    private func monthBoard(tasksByDay: [String: [TaskRecord]], eventsByDay: [String: [GoogleEvent]]) -> some View {
-        GeometryReader { geo in
-            let count = min(8, max(1, weeks))
-            let provisional = (geo.size.height - 22) / CGFloat(count)
-            let agendaHeight: CGFloat = size == .compact && provisional < 64 ? min(240, geo.size.height * 0.45) : 0
-            let row = max(28, (geo.size.height - 22 - agendaHeight) / CGFloat(count))
-            let limit = max(0, Int((row - 26) / 18))
-            let days = gridDays
-            let labels = ["S", "M", "T", "W", "T", "F", "S"]
-            let rows = stride(from: 0, to: days.count, by: 7).map { Array(days[$0..<min($0 + 7, days.count)]) }
-            VStack(spacing: 0) {
-                HStack(spacing: 0) {
-                    ForEach(labels.indices, id: \.self) { index in
-                        Text(labels[index]).font(.caption2).foregroundStyle(palette.muted).frame(maxWidth: .infinity)
-                    }
+    private func phoneFocus(tasksByDay: [String: [TaskRecord]], eventsByDay: [String: [GoogleEvent]]) -> some View {
+        let tasks = store.tasks
+            .filter { $0.deletedAt == nil && $0.dueOn == anchor }
+            .sorted { ($0.completedAt != nil ? 1 : 0, $0.dueTime ?? "99", $0.sort) < ($1.completedAt != nil ? 1 : 0, $1.dueTime ?? "99", $1.sort) }
+        let events = eventsByDay[anchor] ?? []
+        let habits = store.habits.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.sort < $1.sort }
+        let marked: (String) -> Bool = { day in
+            !(tasksByDay[day] ?? []).isEmpty || !(eventsByDay[day] ?? []).isEmpty
+        }
+        return VStack(spacing: 0) {
+            VStack(spacing: 4) {
+                if monthOpen {
+                    MonthPager(day: $anchor, marked: marked, onPick: { setMonthOpen(false) })
+                        .transition(.opacity.combined(with: .move(edge: .top)))
+                } else {
+                    WeekPager(day: $anchor, weekNumbers: true, marked: marked)
+                        .transition(.opacity)
                 }
-                .frame(height: 22)
-                ForEach(rows, id: \.first) { week in
-                    HStack(spacing: 0) {
-                        ForEach(week, id: \.self) { day in
-                            dayCell(day, tasks: tasksByDay[day] ?? [], events: eventsByDay[day] ?? [], limit: limit)
-                                .dropDestination(for: String.self) { ids, _ in
-                                    reschedule(ids.first, day: day, minutes: nil)
-                                }
+                Button { setMonthOpen(!monthOpen) } label: {
+                    Capsule()
+                        .fill(palette.muted.opacity(0.5))
+                        .frame(width: 36, height: 5)
+                        .frame(maxWidth: .infinity, minHeight: 16)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(monthOpen ? "Show week" : "Show month")
+            }
+            .padding(.horizontal, 16)
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 16).onEnded { value in
+                    guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                    if value.translation.height > 30 { setMonthOpen(true) }
+                    if value.translation.height < -30 { setMonthOpen(false) }
+                }
+            )
+            ScrollView {
+            VStack(spacing: 14) {
+                focusCard(anchor == Day.iso() ? "Today" : Day.label(anchor)) {
+                    if tasks.isEmpty && events.isEmpty {
+                        Text("Nothing scheduled")
+                            .foregroundStyle(palette.muted)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 12)
+                    }
+                    ForEach(events) { event in
+                        focusRow(color: Color(hex: event.color), trailing: event.time.map(Day.clock) ?? dayWord, repeats: false) {
+                            Text("G")
+                                .font(.system(size: 13, weight: .heavy, design: .rounded))
+                                .foregroundStyle(palette.ink)
+                                .frame(width: 22, height: 22)
+                                .background(palette.muted.opacity(0.35), in: RoundedRectangle(cornerRadius: 5))
+                        } title: {
+                            Text(event.title)
                         }
                     }
-                    .frame(height: row)
+                    ForEach(tasks) { task in
+                        let done = task.completedAt != nil
+                        let color = store.lists.first { $0.id == task.listId }.map { Color(hex: $0.color) } ?? palette.blue
+                        focusRow(color: color, trailing: task.dueTime.map(Day.clock) ?? dayWord, repeats: task.repeatRule != nil, dimmed: done) {
+                            Button { store.complete(task) } label: {
+                                Image(systemName: done ? "checkmark.square.fill" : "square")
+                                    .font(.title3)
+                                    .foregroundStyle(done ? palette.blue : palette.muted)
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityLabel(done ? "Mark open" : "Complete")
+                        } title: {
+                            Button { onSelect(task) } label: {
+                                Text(task.title)
+                                    .strikethrough(done)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
                 }
-                if agendaHeight > 0 {
-                    agenda(tasksByDay: tasksByDay, eventsByDay: eventsByDay, days: 1)
-                        .frame(height: agendaHeight)
+                if !habits.isEmpty {
+                    focusCard("Habit") {
+                        ForEach(habits) { habit in
+                            let count = store.habitChecks.first { $0.habitId == habit.id && $0.day == anchor }?.count ?? 0
+                            let done = count >= habit.goal
+                            Button {
+                                store.saveCheck(HabitCheckRecord(id: "\(habit.id):\(anchor)", habitId: habit.id, day: anchor, count: done ? 0 : count + 1, updatedAt: ""))
+                            } label: {
+                                focusRow(color: .clear, trailing: dayWord, repeats: false, dimmed: done) {
+                                    Image(systemName: done ? "checkmark.circle.fill" : "circle")
+                                        .font(.title3)
+                                        .foregroundStyle(Color(hex: habit.color))
+                                } title: {
+                                    Text(habit.name)
+                                }
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+            }
+            .padding(16)
+            .padding(.bottom, 88)
+            }
+            .onScrollGeometryChange(for: CGFloat.self) { geo in
+                geo.contentOffset.y + geo.contentInsets.top
+            } action: { _, offset in
+                if offset < -60 && !monthOpen { setMonthOpen(true) }
+                if offset > 40 && monthOpen { setMonthOpen(false) }
+            }
+        }
+    }
+
+    private func setMonthOpen(_ open: Bool) {
+        guard open != monthOpen else { return }
+        withAnimation(.snappy(duration: 0.28)) { monthOpen = open }
+    }
+
+    private var dayWord: String { anchor == Day.iso() ? "Today" : Day.label(anchor) }
+
+    private func focusCard<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text(title)
+                .font(.title3.weight(.bold))
+                .padding(.horizontal, 16)
+                .padding(.top, 14)
+                .padding(.bottom, 4)
+            content()
+        }
+        .padding(.bottom, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(palette.chip)
+        .clipShape(RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func focusRow<Leading: View, Title: View>(
+        color: Color,
+        trailing: String,
+        repeats: Bool,
+        dimmed: Bool = false,
+        @ViewBuilder leading: () -> Leading,
+        @ViewBuilder title: () -> Title
+    ) -> some View {
+        HStack(spacing: 12) {
+            leading()
+            title()
+                .font(.body.weight(.semibold))
+                .lineLimit(1)
+                .foregroundStyle(dimmed ? palette.muted : palette.ink)
+            Spacer(minLength: 8)
+            VStack(alignment: .trailing, spacing: 2) {
+                Text(trailing).font(.subheadline).foregroundStyle(palette.blue)
+                if repeats {
+                    Image(systemName: "repeat").font(.caption2).foregroundStyle(palette.muted)
                 }
             }
         }
-        .gesture(weekZoom)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .overlay(alignment: .leading) {
+            Rectangle().fill(color).frame(width: 4)
+        }
+    }
+
+    private func monthBoard(tasksByDay: [String: [TaskRecord]], eventsByDay: [String: [GoogleEvent]]) -> some View {
+        let labels = ["S", "M", "T", "W", "T", "F", "S"]
+        let weekday = Calendar.current.component(.weekday, from: Day.parse(Day.iso())) - 1
+        let origin = Day.add(Day.iso(), days: -weekday - 7 * 16)
+        let rows = (0..<48).map { Day.add(origin, days: $0 * 7) }
+        return VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(labels.indices, id: \.self) { index in
+                    Text(labels[index]).font(.caption2).foregroundStyle(palette.muted).frame(maxWidth: .infinity)
+                }
+            }
+            .frame(height: 22)
+            let row = max(56, min(280, 720 / CGFloat(max(1, weeks))))
+            let limit = max(1, Int((row - 28) / 18))
+            ScrollViewReader { proxy in
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        ForEach(rows, id: \.self) { start in
+                            HStack(spacing: 0) {
+                                ForEach(0..<7, id: \.self) { offset in
+                                    let day = Day.add(start, days: offset)
+                                    dayCell(day, tasks: tasksByDay[day] ?? [], events: eventsByDay[day] ?? [], limit: limit)
+                                        .dropDestination(for: String.self) { ids, _ in
+                                            _ = reschedule(ids.first, day: day, minutes: nil)
+                                        }
+                                }
+                            }
+                            .frame(height: row)
+                            .id(start)
+                        }
+                    }
+                }
+                .simultaneousGesture(weekZoom)
+                .onAppear {
+                    let current = Day.add(Day.iso(), days: -weekday)
+                    proxy.scrollTo(current, anchor: .center)
+                }
+            }
+        }
     }
 
     private func dayCell(_ day: String, tasks: [TaskRecord], events: [GoogleEvent], limit: Int) -> some View {
@@ -998,6 +1785,10 @@ struct CalendarScreen: View {
                 chip(task.title, color: palette.blue)
                     .draggable(task.id)
                     .onTapGesture { onSelect(task) }
+                    .contextMenu {
+                        Button("Complete", systemImage: "checkmark.square") { store.complete(task) }
+                        Button("Open", systemImage: "square.and.pencil") { onSelect(task) }
+                    }
             }
             ForEach(shownEvents) { event in
                 chip(event.title, color: Color(hex: event.color))
@@ -1033,17 +1824,24 @@ struct CalendarScreen: View {
                             Text("Nothing scheduled").foregroundStyle(.secondary)
                         }
                         ForEach(tasks) { task in
-                            Button { onSelect(task) } label: {
-                                HStack {
-                                    Image(systemName: "circle")
-                                    Text(task.title).lineLimit(1)
-                                    Spacer()
-                                    if let time = task.dueTime {
-                                        Text(Day.clock(time)).foregroundStyle(palette.blue)
-                                    }
+                            HStack {
+                                Button { store.complete(task) } label: {
+                                    Image(systemName: "square").foregroundStyle(palette.muted)
                                 }
+                                .buttonStyle(.plain)
+                                .accessibilityLabel("Complete")
+                                Button { onSelect(task) } label: {
+                                    HStack {
+                                        Text(task.title).lineLimit(1)
+                                        Spacer()
+                                        if let time = task.dueTime {
+                                            Text(Day.clock(time)).foregroundStyle(palette.blue)
+                                        }
+                                    }
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
                             }
-                            .buttonStyle(.plain)
                         }
                         ForEach(events) { event in
                             HStack {
@@ -1206,37 +2004,35 @@ struct HabitScreen: View {
     @State private var name = ""
     @State private var selected: String?
     @State private var addOpen = false
+    @State private var day = Day.iso()
 
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
 
     var body: some View {
-        let habits = store.habits.filter { $0.deletedAt == nil }.sorted { $0.sort < $1.sort }
-        let day = Day.iso()
+        let habits = store.habits.filter { $0.deletedAt == nil && $0.archivedAt == nil }.sorted { $0.sort < $1.sort }
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Habit").font(.title2.bold()).frame(maxWidth: .infinity)
-                weekStrip(today: day)
-                ForEach(habits) { habit in
-                    let done = progress(habit, day: day) >= habit.goal
-                    HStack(spacing: 12) {
-                        Button { toggle(habit, day: day) } label: {
-                            Image(systemName: done ? "checkmark.circle.fill" : "circle")
-                                .font(.title3)
-                                .foregroundStyle(Color(hex: habit.color))
+                Text("Habit").font(.title3.bold()).frame(maxWidth: .infinity)
+                weekStrip
+                let waiting = habits.filter { progress($0, day: day) < $0.goal }
+                let checked = habits.filter { progress($0, day: day) >= $0.goal }
+                ForEach(waiting) { habit in
+                    habitCard(habit, done: false)
+                        .padding(14)
+                        .background(palette.chip, in: RoundedRectangle(cornerRadius: 16))
+                }
+                if !checked.isEmpty {
+                    VStack(alignment: .leading, spacing: 14) {
+                        Text("Checked-in").font(.headline)
+                        ForEach(checked) { habit in
+                            habitCard(habit, done: true)
+                                .padding(0)
+                                .background(Color.clear)
                         }
-                        .buttonStyle(.plain)
-                        Text(habit.name).font(.body.weight(.medium)).lineLimit(1)
-                        Spacer(minLength: 8)
-                        Button { selected = selected == habit.id ? nil : habit.id } label: {
-                            VStack(alignment: .trailing, spacing: 2) {
-                                Text("\(streak(habit))").font(.title3.weight(.semibold))
-                                Text("Current Streak").font(.caption2).foregroundStyle(palette.muted)
-                            }
-                        }
-                        .buttonStyle(.plain)
                     }
                     .padding(14)
-                    .background(palette.chip, in: RoundedRectangle(cornerRadius: 14))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(palette.chip, in: RoundedRectangle(cornerRadius: 16))
                 }
                 if let selected {
                     heatmap(habitId: selected, day: day)
@@ -1276,25 +2072,40 @@ struct HabitScreen: View {
         .toolbar(.hidden, for: .navigationBar)
     }
 
-    private func weekStrip(today: String) -> some View {
-        let weekday = Calendar.current.component(.weekday, from: Day.parse(today)) - 1
-        let start = Day.add(today, days: -weekday)
-        let days = (0..<7).map { Day.add(start, days: $0) }
-        return HStack {
-            ForEach(days, id: \.self) { day in
-                VStack(spacing: 6) {
-                    Text(Day.parse(day).formatted(.dateTime.weekday(.narrow)))
-                        .font(.caption2)
-                        .foregroundStyle(palette.muted)
-                    Text(String(Int(day.suffix(2)) ?? 0))
-                        .font(.system(size: 15, weight: day == today ? .bold : .regular))
-                        .foregroundStyle(day == today ? Color.white : palette.ink)
-                        .frame(width: 28, height: 28)
-                        .background(day == today ? palette.blue : .clear, in: Circle())
-                }
-                .frame(maxWidth: .infinity)
+    private func habitCard(_ habit: HabitRecord, done: Bool) -> some View {
+        HStack(spacing: 12) {
+            Button { toggle(habit, day: day) } label: {
+                Image(systemName: done ? "checkmark" : "circle.fill")
+                    .font(.title3)
+                    .foregroundStyle(Color(hex: habit.color))
             }
+            .buttonStyle(.plain)
+            Text(habit.name).font(.body.weight(.semibold)).lineLimit(1)
+                .contextMenu {
+                    Button("Weekly") {
+                        var next = habit
+                        next.cadence = habit.cadence == "weekly" ? "daily" : "weekly"
+                        store.saveHabit(next)
+                    }
+                    Button("Delete", role: .destructive) {
+                        var next = habit
+                        next.deletedAt = ISO8601DateFormatter().string(from: .now)
+                        store.saveHabit(next)
+                    }
+                }
+            Spacer(minLength: 8)
+            Button { selected = selected == habit.id ? nil : habit.id } label: {
+                VStack(alignment: .trailing, spacing: 0) {
+                    Text("\(streak(habit))").font(.title3.weight(.bold))
+                    Text("Current Streak").font(.caption2).foregroundStyle(palette.muted)
+                }
+            }
+            .buttonStyle(.plain)
         }
+    }
+
+    private var weekStrip: some View {
+        WeekPager(day: $day)
     }
 
     private func streak(_ habit: HabitRecord) -> Int {
@@ -1358,47 +2169,43 @@ struct CountdownScreen: View {
     @State private var title = ""
     @State private var selected: CountdownRecord?
     @State private var addOpen = false
+    @State private var photo: PhotosPickerItem?
 
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
 
     var body: some View {
         let items = store.countdowns.filter { $0.deletedAt == nil }.sorted { $0.sort < $1.sort }
-        let columns = [GridItem(.adaptive(minimum: size == .compact ? 280 : 200), spacing: 12)]
         ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("Countdowns").font(.title2.bold()).frame(maxWidth: .infinity, alignment: .leading)
-                LazyVGrid(columns: columns, spacing: 12) {
-                    ForEach(items) { item in
-                        let amount = Day.countdownAmount(item)
-                        Button { selected = item } label: {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text("\(amount)")
-                                .font(.system(size: 52, weight: .bold))
-                                .foregroundStyle(Color(hex: item.color))
-                                .lineLimit(1)
-                                .minimumScaleFactor(0.4)
-                            Text(phrase(item, amount))
-                                .font(.caption)
-                                .foregroundStyle(palette.muted)
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Countdown").font(.title3.bold()).frame(maxWidth: .infinity)
+                ForEach(items) { item in
+                    let amount = Day.countdownAmount(item)
+                    Button { selected = item } label: {
+                        HStack(spacing: 12) {
+                            Text(String(item.title.prefix(1)))
+                                .font(.headline)
+                                .foregroundStyle(.white)
+                                .frame(width: 42, height: 42)
+                                .background(Color(hex: item.color), in: Circle())
                             Text(item.title)
-                                .font(.subheadline.weight(.semibold))
-                                .multilineTextAlignment(.leading)
-                                .lineLimit(2)
+                                .font(.body.weight(.semibold))
+                                .lineLimit(1)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                            VStack(alignment: .trailing, spacing: 0) {
+                                Text("\(amount)")
+                                    .font(.system(size: 28, weight: .bold))
+                                    .foregroundStyle(palette.blue)
+                                Text(phrase(item, amount))
+                                    .font(.caption2)
+                                    .foregroundStyle(palette.muted)
+                            }
                         }
-                        .padding(EdgeInsets(top: 16, leading: 20, bottom: 16, trailing: 16))
-                        .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
+                        .padding(12)
                         .background(palette.chip, in: RoundedRectangle(cornerRadius: 16))
-                        .overlay(alignment: .leading) {
-                            Rectangle().fill(Color(hex: item.color)).frame(width: 4)
-                        }
-                        }
-                        .buttonStyle(.plain)
-                        .overlay(alignment: .topTrailing) {
-                            Button("Delete", role: .destructive) { remove(item) }
-                                .font(.caption)
-                                .buttonStyle(.borderless)
-                                .padding(8)
-                        }
+                    }
+                    .buttonStyle(.plain)
+                    .contextMenu {
+                        Button("Delete", role: .destructive) { remove(item) }
                     }
                 }
             }
@@ -1459,10 +2266,11 @@ struct CountdownScreen: View {
     }
 
     private func phrase(_ record: CountdownRecord, _ amount: Int) -> String {
-        let unit = record.unit + (abs(amount) == 1 ? "" : "s")
-        if amount == 0 { return record.mode == "countup" ? "Started today" : "Today" }
+        let name = record.unit == "day" ? "Day" : record.unit.prefix(1).uppercased() + record.unit.dropFirst()
+        let unit = abs(amount) == 1 ? name : "\(name)s"
+        if amount == 0 { return record.mode == "countup" ? "Started" : "Today" }
         if record.mode == "countup" { return "\(unit) since" }
-        return "\(unit) left"
+        return "\(unit) Left"
     }
 
     private func add() {
@@ -1503,6 +2311,17 @@ struct CountdownScreen: View {
                 Text("Weeks").tag("week")
                 Text("Months").tag("month")
                 Text("Years").tag("year")
+            }
+            PhotosPicker(selection: $photo, matching: .images) {
+                Label(record.imageKey == nil ? "Add image" : "Replace image", systemImage: "photo")
+            }
+            .onChange(of: photo) { _, item in
+                guard let item else { return }
+                Task {
+                    if let data = try? await item.loadTransferable(type: Data.self) {
+                        await store.attachImage(record, data: data)
+                    }
+                }
             }
             Toggle("Repeats yearly", isOn: Binding(get: { record.repeatYearly }, set: { value in
                 var next = record

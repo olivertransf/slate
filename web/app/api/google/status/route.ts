@@ -8,7 +8,7 @@ export async function GET(request: Request) {
   if (!googleConfigured()) {
     return Response.json({ configured: false, connected: false, calendars: [] });
   }
-  if (!sessionOk(request)) {
+  if (!(await sessionOk(request))) {
     return Response.json({ error: "Unlock required." }, { status: 401 });
   }
   const refresh = await refreshFor(request);

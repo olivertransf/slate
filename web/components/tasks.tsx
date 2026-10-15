@@ -1,11 +1,11 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { addDays, alive, matchesView, parseDay, startOfWeek, taskOpen, formatTime, type ListRecord, type TaskRecord } from "@/lib/model";
+import { addDays, alive, formatDay, matchesView, parseDay, sortTasks, startOfWeek, taskOpen, formatTime, type ListRecord, type SortMode, type TaskRecord } from "@/lib/model";
+import { taskToEvent } from "@/lib/google-client";
 import { parseQuickAdd } from "@/lib/quick-add";
 import { Board, type BoardGroup } from "./board";
 import { Check } from "./check";
-import { QuickAddBox } from "./quick-add-box";
 import { newId, stampTask, today, usePlanner } from "./planner-context";
 import { TaskRow } from "./task-row";
 
@@ -14,11 +14,15 @@ export function TaskColumn({
   selectedId,
   onSelect,
   onLists,
+  addOpen = false,
+  onAddClose,
 }: {
   view: string;
   selectedId: string | null;
   onSelect: (id: string) => void;
   onLists?: () => void;
+  addOpen?: boolean;
+  onAddClose?: () => void;
 }) {
   const { data, save, completeTask } = usePlanner();
   const [draft, setDraft] = useState("");
@@ -35,10 +39,13 @@ export function TaskColumn({
   const [layout, setLayout] = useState<"list" | "board">("list");
   const [group, setGroup] = useState<BoardGroup>("date");
   const [showCompleted, setShowCompleted] = useState(false);
+  const [notes, setNotes] = useState("");
+  const [sortMode, setSortMode] = useState<SortMode>("manual");
+  const [picked, setPicked] = useState<string[]>([]);
   const todayText = today();
   const list = view.startsWith("list:") ? data.lists.find((item) => item.id === view.slice(5)) : undefined;
-  const title = list?.name ?? (view === "inbox" ? "Inbox" : view === "today" ? "Today" : view === "tomorrow" ? "Tomorrow" : view === "week" ? "Next 7 Days" : "Tagged");
-  const open = data.tasks.filter((task) => matchesView(task, view, todayText)).sort((a, b) => a.sort - b.sort);
+  const title = list?.name ?? (view === "inbox" ? "Inbox" : view === "today" ? "Today" : view === "tomorrow" ? "Tomorrow" : view === "week" ? "Next 7 Days" : view === "overdue" ? "Overdue" : view === "completed" ? "Completed" : view === "trash" ? "Trash" : alive(data.tags).find((tag) => view === `tag:${tag.id}`)?.name ?? "Tagged");
+  const open = sortTasks(data.tasks.filter((task) => matchesView(task, view, todayText)), sortMode);
   const done = data.tasks.filter((task) => completedInView(task, view, todayText)).sort((a, b) => a.sort - b.sort);
   const sections = list ? [...list.sections].sort((a, b) => a.sort - b.sort) : [];
   const lists = alive(data.lists).sort((a, b) => a.sort - b.sort);
@@ -105,6 +112,7 @@ export function TaskColumn({
       title: parsed.title,
       listId: list?.id ?? null,
       sectionId: list && activeSection ? activeSection : null,
+      notes,
       dueOn: parsed.dueOn,
       dueTime: parsed.dueTime,
       priority: parsed.priority,
@@ -113,6 +121,8 @@ export function TaskColumn({
     });
     save("tasks", task);
     setDraft("");
+    setNotes("");
+    onAddClose?.();
     onSelect(task.id);
   }
 
@@ -176,6 +186,9 @@ export function TaskColumn({
     ];
   }, [list, open, sections]);
 
+  const parsedDraft = draft ? parseQuickAdd(draft, todayText) : null;
+  const draftHint = [parsedDraft?.dueOn ? formatDay(parsedDraft.dueOn, todayText) : "", parsedDraft?.dueTime ? formatTime(parsedDraft.dueTime) : ""].filter(Boolean).join(" · ");
+
   return (
     <section className="column">
       <header>
@@ -210,6 +223,12 @@ export function TaskColumn({
           <span className="count">{open.length}</span>
         </div>
         <div className="header-tools">
+          <select aria-label="Sort" value={sortMode} onChange={(event) => setSortMode(event.target.value as SortMode)}>
+            <option value="manual">Manual</option>
+            <option value="date">Date</option>
+            <option value="priority">Priority</option>
+            <option value="title">Title</option>
+          </select>
           {layout === "board" && (
             <select aria-label="Board columns" value={group} onChange={(event) => chooseGroup(event.target.value as BoardGroup)}>
               <option value="date">Date</option>
@@ -226,6 +245,9 @@ export function TaskColumn({
               {menuOpen && (
                 <div className="more-pop" role="menu">
                   <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); setAddingSection(true); }}>Add section</button>
+                  <button type="button" role="menuitem" onClick={() => { setMenuOpen(false); save("lists", { ...list, archivedAt: list.archivedAt ? null : new Date().toISOString() }); }}>
+                    {list.archivedAt ? "Unarchive" : "Archive"}
+                  </button>
                 </div>
               )}
             </div>
@@ -253,15 +275,19 @@ export function TaskColumn({
           {onLists && <button className="text-button lists-toggle" onClick={onLists}>Lists</button>}
         </div>
       </header>
-      <div className="quick">
-        <QuickAddBox
-          value={draft}
-          onChange={setDraft}
-          onSubmit={addTask}
-          today={todayText}
-          placeholder="Add a task"
-        />
-      </div>
+      {addOpen && view !== "completed" && view !== "trash" && (
+        <form className="add-sheet" onSubmit={addTask}>
+          <button type="button" className="sheet-backdrop" aria-label="Close" onClick={onAddClose} />
+          <div className="sheet-card" role="dialog" aria-modal="true" aria-label="New task">
+            <input aria-label="Task" placeholder="What would you like to do?" value={draft} autoFocus onChange={(event) => setDraft(event.target.value)} />
+            <textarea aria-label="Description" placeholder="Description" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
+            <div className="sheet-tools">
+              <span>{draftHint || "Tomorrow, 3pm, and #tags stay in the title"}</span>
+              <button className="primary" type="submit">Add</button>
+            </div>
+          </div>
+        </form>
+      )}
       {list && addingSection && (
         <form className="section-compose" onSubmit={addSection}>
           <input
@@ -274,6 +300,14 @@ export function TaskColumn({
             onKeyDown={(event) => { if (event.key === "Escape") { setAddingSection(false); setSectionName(""); } }}
           />
         </form>
+      )}
+      {picked.length > 0 && (
+        <div className="bulk-bar">
+          <span>{picked.length} selected</span>
+          <button type="button" onClick={() => { for (const id of picked) { const task = data.tasks.find((item) => item.id === id); if (task) completeTask(task); } setPicked([]); }}>Complete</button>
+          <button type="button" onClick={() => { for (const id of picked) { const task = data.tasks.find((item) => item.id === id); if (task) save("tasks", { ...task, deletedAt: new Date().toISOString() }); } setPicked([]); }}>Delete</button>
+          <button type="button" onClick={() => setPicked([])}>Clear</button>
+        </div>
       )}
       {layout === "board" ? (
         <Board
@@ -333,16 +367,26 @@ export function TaskColumn({
                 </button>
               </div>
             )}
-            {!collapsed.includes(block.id) && block.tasks.map((task) => (
-              <TaskRow
-                key={task.id}
-                task={task}
-                draggable={Boolean(list)}
-                selected={task.id === selectedId}
-                onSelect={() => onSelect(task.id)}
-                onComplete={() => completeTask(task)}
-              />
-            ))}
+            {!collapsed.includes(block.id) && (
+              <div className="task-card">
+                {block.tasks.map((task, index) => (
+                  <TaskRow
+                    key={task.id}
+                    task={task}
+                    draggable={Boolean(list)}
+                    selected={task.id === selectedId || picked.includes(task.id)}
+                    onSelect={() => onSelect(task.id)}
+                    onComplete={() => completeTask(task)}
+                    onDelete={() => save("tasks", view === "trash" ? { ...task, deletedAt: null } : { ...task, deletedAt: new Date().toISOString() })}
+                    onReorder={() => {
+                      const previous = block.tasks[index - 1];
+                      if (!previous) return;
+                      save("tasks", { ...task, sort: previous.sort - 1 });
+                    }}
+                  />
+                ))}
+              </div>
+            )}
           </div>
         ))}
         {showCompleted && done.length > 0 && <div className="section-title">Completed</div>}
@@ -359,6 +403,9 @@ const PRIORITY = ["No priority", "Low priority", "Medium priority", "High priori
 
 export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | null; onClose: () => void; open?: boolean }) {
   const { data, save, completeTask } = usePlanner();
+  const [converting, setConverting] = useState(false);
+  const [convertError, setConvertError] = useState<{ message: string; reconnect: boolean } | null>(null);
+  useEffect(() => setConvertError(null), [taskId]);
   const task = data.tasks.find((item) => item.id === taskId && !item.deletedAt);
   if (!task) {
     return (
@@ -375,6 +422,20 @@ export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | 
 
   function patch(partial: Partial<TaskRecord>) {
     save("tasks", { ...task!, ...partial });
+  }
+
+  async function convert() {
+    if (!task || converting) return;
+    setConverting(true);
+    setConvertError(null);
+    const result = await taskToEvent(task, day);
+    setConverting(false);
+    if (!result.ok) {
+      setConvertError({ message: result.error, reconnect: result.reconnect });
+      return;
+    }
+    save("tasks", { ...task, deletedAt: new Date().toISOString() });
+    onClose();
   }
 
   return (
@@ -414,12 +475,19 @@ export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | 
             </span>
           </label>
           <label className="detail-field">
+            <DetailIcon d="M3 4.2h10M3 8h7" />
+            <span className="detail-value">
+              <span className={task.startOn ? "" : "placeholder"}>{task.startOn ?? "Start"}</span>
+              <input type="date" aria-label="Start date" value={task.startOn ?? ""} onChange={(event) => patch({ startOn: event.target.value || null })} />
+            </span>
+          </label>
+          <label className="detail-field">
             <DetailIcon d="M3 8.2a5 5 0 0 1 8.6-3.4L13 6.2M13 3.2v3h-3M13 7.8a5 5 0 0 1-8.6 3.4L3 9.8M3 12.8v-3h3" />
             <select
               className={task.repeat ? "" : "is-empty"}
               aria-label="Repeat"
               value={task.repeat?.unit ?? ""}
-              onChange={(event) => patch({ repeat: event.target.value ? { every: 1, unit: event.target.value as "day" } : null })}
+              onChange={(event) => patch({ repeat: event.target.value ? { every: task.repeat?.every ?? 1, unit: event.target.value as "day" | "week" | "month" | "year", weekdays: task.repeat?.weekdays } : null })}
             >
               <option value="">Repeat</option>
               <option value="day">Every day</option>
@@ -427,6 +495,35 @@ export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | 
               <option value="month">Every month</option>
               <option value="year">Every year</option>
             </select>
+            {task.repeat && (
+              <input
+                type="number"
+                min={1}
+                max={99}
+                aria-label="Repeat interval"
+                value={task.repeat.every}
+                onChange={(event) => patch({ repeat: { ...task.repeat!, every: Math.max(1, Number(event.target.value) || 1) } })}
+              />
+            )}
+            {task.repeat?.unit === "week" && (
+              <div className="weekday-picks" role="group" aria-label="Weekdays">
+                {["S", "M", "T", "W", "T", "F", "S"].map((label, index) => (
+                  <button
+                    key={`${label}-${index}`}
+                    type="button"
+                    className={task.repeat?.weekdays?.includes(index) ? "on" : ""}
+                    aria-pressed={task.repeat?.weekdays?.includes(index) ?? false}
+                    onClick={() => {
+                      const current = task.repeat?.weekdays ?? [];
+                      const weekdays = current.includes(index) ? current.filter((day) => day !== index) : [...current, index].sort();
+                      patch({ repeat: { ...task.repeat!, weekdays } });
+                    }}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
           </label>
           <label className="detail-field">
             <DetailIcon d="M8 2.6a2.6 2.6 0 0 1 2.6 2.6v1.2l.7 1.4H4.7l.7-1.4V5.2A2.6 2.6 0 0 1 8 2.6zM6.8 9.6a1.2 1.2 0 0 0 2.4 0" />
@@ -495,6 +592,12 @@ export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | 
           </button>
         </div>
         <textarea className="detail-notes" aria-label="Notes" placeholder="Description" value={task.notes} onChange={(event) => patch({ notes: event.target.value })} />
+        {convertError && (
+          <p className="detail-error" role="alert">
+            {convertError.message}
+            {convertError.reconnect && <> <a href="/api/google/start">Reconnect</a></>}
+          </p>
+        )}
       </div>
       <footer className="detail-foot">
         <label className="detail-list">
@@ -508,6 +611,16 @@ export function TaskDetail({ taskId, onClose, open = true }: { taskId: string | 
             {lists.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
           </select>
         </label>
+        <button
+          type="button"
+          className="detail-convert"
+          disabled={converting}
+          title={task.dueOn ? "Create a Google Calendar event and move this task to Trash" : "Create a Google Calendar event today and move this task to Trash"}
+          onClick={() => void convert()}
+        >
+          <DetailIcon d="M2.5 5h11A1 1 0 0 1 14.5 6v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1zM1.5 8h13M5 3v3M11 3v3" />
+          <span>{converting ? "Converting" : "Make event"}</span>
+        </button>
         <button
           type="button"
           className="detail-icon"

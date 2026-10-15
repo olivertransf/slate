@@ -1,17 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { requestAllowed } from "@/lib/access";
 import { getText, putText } from "@/lib/r2";
-import { readToken, tokenValid } from "@/lib/session";
 import { readRefresh } from "@/lib/google";
 
 const REFRESH_KEY = "private/google-refresh.json";
 const STATE_KEY = "private/google-state.json";
 
-export function sessionOk(request: Request): boolean {
-  try {
-    return tokenValid(readToken(request));
-  } catch {
-    return false;
-  }
+export async function sessionOk(request: Request): Promise<boolean> {
+  return requestAllowed(request);
 }
 
 function key(): Buffer {
@@ -54,7 +50,7 @@ export async function clearGoogleRefresh(): Promise<void> {
 }
 
 export async function refreshFor(request: Request): Promise<string | null> {
-  if (!sessionOk(request)) return null;
+  if (!(await sessionOk(request))) return null;
   const cookie = readRefresh(request);
   const stored = await loadGoogleRefresh().catch(() => null);
   if (cookie) {

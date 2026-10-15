@@ -3,7 +3,10 @@ import { addDays } from "@/lib/model";
 const AUTH = "https://accounts.google.com/o/oauth2/v2/auth";
 const TOKEN = "https://oauth2.googleapis.com/token";
 const API = "https://www.googleapis.com/calendar/v3";
-const SCOPE = "https://www.googleapis.com/auth/calendar.readonly";
+const SCOPE = [
+  "https://www.googleapis.com/auth/calendar.readonly",
+  "https://www.googleapis.com/auth/calendar.events",
+].join(" ");
 const REFRESH = "slate_gcal_refresh";
 const STATE = "slate_gcal_state";
 
@@ -191,6 +194,64 @@ export async function listEvents(refresh: string, start: string, end: string): P
     return (payload?.items ?? []).flatMap((event) => expand(event, calendar));
   }));
   return batches.flat();
+}
+
+export type NewEvent = {
+  title: string;
+  notes?: string;
+  day: string;
+  time?: string | null;
+  minutes?: number;
+  timeZone?: string;
+  calendarId?: string;
+};
+
+export type CreateResult =
+  | { ok: true; event: GoogleEvent }
+  | { ok: false; reason: "auth" | "scope" | "failed" };
+
+function addMinutes(day: string, time: string, minutes: number): string {
+  const [year, month, date] = day.split("-").map(Number);
+  const [hour, minute] = time.split(":").map(Number);
+  const value = new Date(Date.UTC(year, month - 1, date, hour, minute + minutes));
+  const pad = (part: number) => String(part).padStart(2, "0");
+  return `${value.getUTCFullYear()}-${pad(value.getUTCMonth() + 1)}-${pad(value.getUTCDate())}T${pad(value.getUTCHours())}:${pad(value.getUTCMinutes())}:00`;
+}
+
+export async function createEvent(refresh: string, input: NewEvent): Promise<CreateResult> {
+  const token = await accessToken(refresh);
+  if (!token) return { ok: false, reason: "auth" };
+  const calendarId = input.calendarId || "primary";
+  const timeZone = input.timeZone || "UTC";
+  const timed = Boolean(input.time && /^\d{2}:\d{2}$/.test(input.time));
+  const body = timed
+    ? {
+        summary: input.title,
+        description: input.notes || undefined,
+        start: { dateTime: `${input.day}T${input.time}:00`, timeZone },
+        end: { dateTime: addMinutes(input.day, input.time as string, Math.max(5, input.minutes ?? 60)), timeZone },
+      }
+    : {
+        summary: input.title,
+        description: input.notes || undefined,
+        start: { date: input.day },
+        end: { date: addDays(input.day, 1) },
+      };
+  const response = await fetch(`${API}/calendars/${encodeURIComponent(calendarId)}/events`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (response.status === 401) return { ok: false, reason: "auth" };
+  if (response.status === 403) return { ok: false, reason: "scope" };
+  if (!response.ok) return { ok: false, reason: "failed" };
+  const raw = (await response.json()) as RawEvent;
+  const calendars = (await calendarsFor(token)) ?? [];
+  const calendar = calendars.find((item) => item.id === calendarId || (calendarId === "primary" && item.primary))
+    ?? { id: calendarId, name: "Calendar", color: "#4e81fb", primary: calendarId === "primary" };
+  const [event] = expand(raw, calendar);
+  if (!event) return { ok: false, reason: "failed" };
+  return { ok: true, event };
 }
 
 function expand(event: RawEvent, calendar: GoogleCalendar): GoogleEvent[] {

@@ -1,21 +1,14 @@
 import { randomUUID } from "node:crypto";
-import { getBytes, putBytes } from "@/lib/r2";
-import { readToken, tokenValid } from "@/lib/session";
+import { requestAllowed } from "@/lib/access";
+import { logEvent } from "@/lib/log";
+import { deleteKey, getBytes, putBytes } from "@/lib/r2";
 
 export const runtime = "nodejs";
 
 const TYPES = new Set(["image/jpeg", "image/png", "image/webp", "image/gif"]);
 
-function authorized(request: Request): boolean {
-  try {
-    return tokenValid(readToken(request));
-  } catch {
-    return false;
-  }
-}
-
 export async function GET(request: Request) {
-  if (!authorized(request)) return Response.json({ error: "Unlock required." }, { status: 401 });
+  if (!(await requestAllowed(request))) return Response.json({ error: "Unlock required." }, { status: 401 });
   const key = new URL(request.url).searchParams.get("key") ?? "";
   if (!key.startsWith("planner/files/")) return Response.json({ error: "Missing file." }, { status: 400 });
   const file = await getBytes(key);
@@ -25,8 +18,17 @@ export async function GET(request: Request) {
   });
 }
 
+export async function DELETE(request: Request) {
+  if (!(await requestAllowed(request))) return Response.json({ error: "Unlock required." }, { status: 401 });
+  const key = new URL(request.url).searchParams.get("key") ?? "";
+  if (!key.startsWith("planner/files/")) return Response.json({ error: "Missing file." }, { status: 400 });
+  await deleteKey(key);
+  logEvent("file.deleted", {});
+  return Response.json({ ok: true });
+}
+
 export async function POST(request: Request) {
-  if (!authorized(request)) return Response.json({ error: "Unlock required." }, { status: 401 });
+  if (!(await requestAllowed(request))) return Response.json({ error: "Unlock required." }, { status: 401 });
   const form = await request.formData();
   const file = form.get("file");
   if (!(file instanceof File)) return Response.json({ error: "Missing file." }, { status: 400 });

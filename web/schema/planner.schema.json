@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://slate.olivertran.me/schema/planner.schema.json",
+  "title": "Slate planner snapshot",
+  "description": "Version 2 contract shared by the website and the iOS app.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["revision", "reset", "lists", "tasks", "tags", "habits", "habitChecks", "countdowns"],
+  "properties": {
+    "schemaVersion": { "const": 2 },
+    "revision": { "type": "integer", "minimum": 0 },
+    "reset": { "type": "boolean" },
+    "lists": { "type": "array", "items": { "$ref": "#/$defs/list" } },
+    "tasks": { "type": "array", "items": { "$ref": "#/$defs/task" } },
+    "tags": { "type": "array", "items": { "$ref": "#/$defs/tag" } },
+    "habits": { "type": "array", "items": { "$ref": "#/$defs/habit" } },
+    "habitChecks": { "type": "array", "items": { "$ref": "#/$defs/habitCheck" } },
+    "countdowns": { "type": "array", "items": { "$ref": "#/$defs/countdown" } }
+  },
+  "$defs": {
+    "stamp": { "type": "string", "minLength": 10 },
+    "id": { "type": "string", "minLength": 1, "maxLength": 80 },
+    "repeat": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["every", "unit"],
+      "properties": {
+        "every": { "type": "integer", "minimum": 1, "maximum": 99 },
+        "unit": { "enum": ["day", "week", "month", "year"] },
+        "weekdays": {
+          "type": "array",
+          "items": { "type": "integer", "minimum": 0, "maximum": 6 }
+        }
+      }
+    },
+    "list": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "color", "sort", "sections", "updatedAt", "deletedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "maxLength": 200 },
+        "color": { "type": "string", "maxLength": 32 },
+        "sort": { "type": "number" },
+        "sections": { "type": "array", "items": { "$ref": "#/$defs/section" } },
+        "archivedAt": { "type": ["string", "null"] },
+        "updatedAt": { "$ref": "#/$defs/stamp" },
+        "deletedAt": { "type": ["string", "null"] }
+      }
+    },
+    "section": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "sort"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "maxLength": 200 },
+        "sort": { "type": "number" }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "notes", "priority", "tagIds", "subtasks", "sort", "updatedAt", "deletedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 500 },
+        "notes": { "type": "string", "maxLength": 20000 },
+        "listId": { "type": ["string", "null"] },
+        "sectionId": { "type": ["string", "null"] },
+        "priority": { "type": "integer", "minimum": 0, "maximum": 3 },
+        "tagIds": { "type": "array", "items": { "$ref": "#/$defs/id" } },
+        "dueOn": { "type": ["string", "null"] },
+        "dueTime": { "type": ["string", "null"] },
+        "startOn": { "type": ["string", "null"] },
+        "repeat": { "anyOf": [{ "$ref": "#/$defs/repeat" }, { "type": "null" }] },
+        "remindMinutesBefore": { "type": ["integer", "null"] },
+        "completedAt": { "type": ["string", "null"] },
+        "subtasks": { "type": "array", "items": { "$ref": "#/$defs/subtask" } },
+        "sort": { "type": "number" },
+        "updatedAt": { "$ref": "#/$defs/stamp" },
+        "deletedAt": { "type": ["string", "null"] }
+      }
+    },
+    "subtask": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "done"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 500 },
+        "done": { "type": "boolean" }
+      }
+    },
+    "tag": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "color", "updatedAt", "deletedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "maxLength": 80 },
+        "color": { "type": "string", "maxLength": 32 },
+        "updatedAt": { "$ref": "#/$defs/stamp" },
+        "deletedAt": { "type": ["string", "null"] }
+      }
+    },
+    "habit": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "name", "color", "cadence", "goal", "sort", "updatedAt", "deletedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "name": { "type": "string", "maxLength": 200 },
+        "color": { "type": "string", "maxLength": 32 },
+        "cadence": { "enum": ["daily", "weekly"] },
+        "goal": { "type": "integer", "minimum": 1, "maximum": 100 },
+        "sort": { "type": "number" },
+        "archivedAt": { "type": ["string", "null"] },
+        "reminderTime": { "type": ["string", "null"] },
+        "updatedAt": { "$ref": "#/$defs/stamp" },
+        "deletedAt": { "type": ["string", "null"] }
+      }
+    },
+    "habitCheck": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "habitId", "day", "count", "updatedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "habitId": { "$ref": "#/$defs/id" },
+        "day": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "updatedAt": { "$ref": "#/$defs/stamp" }
+      }
+    },
+    "countdown": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "title", "day", "mode", "repeatYearly", "unit", "color", "sort", "updatedAt", "deletedAt"],
+      "properties": {
+        "id": { "$ref": "#/$defs/id" },
+        "title": { "type": "string", "maxLength": 200 },
+        "day": { "type": "string" },
+        "mode": { "enum": ["countdown", "countup"] },
+        "repeatYearly": { "type": "boolean" },
+        "unit": { "enum": ["day", "week", "month", "year"] },
+        "color": { "type": "string", "maxLength": 32 },
+        "imageKey": { "type": ["string", "null"] },
+        "remindDaysBefore": { "type": ["integer", "null"] },
+        "sort": { "type": "number" },
+        "updatedAt": { "$ref": "#/$defs/stamp" },
+        "deletedAt": { "type": ["string", "null"] }
+      }
+    }
+  }
+}

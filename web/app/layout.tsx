@@ -4,12 +4,14 @@ import "./globals.css";
 export const metadata: Metadata = {
   title: "Slate",
   description: "Tasks, calendar, habits, and countdowns.",
+  manifest: "/manifest.webmanifest",
+  appleWebApp: { capable: true, title: "Slate", statusBarStyle: "black-translucent" },
 };
 
 export const viewport: Viewport = {
   width: "device-width",
   initialScale: 1,
-  themeColor: "#f3f4f6",
+  themeColor: "#000000",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {

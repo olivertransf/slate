@@ -9,9 +9,12 @@ export const LIST_COLORS = [
   "#0091FF",
 ] as const;
 
+export const SCHEMA_VERSION = 2;
+
 export type RepeatRule = {
   every: number;
   unit: "day" | "week" | "month" | "year";
+  weekdays?: number[];
 };
 
 export type Section = {
@@ -26,6 +29,7 @@ export type ListRecord = {
   color: string;
   sort: number;
   sections: Section[];
+  archivedAt?: string | null;
   updatedAt: string;
   deletedAt: string | null;
 };
@@ -46,6 +50,7 @@ export type TaskRecord = {
   tagIds: string[];
   dueOn: string | null;
   dueTime: string | null;
+  startOn?: string | null;
   repeat: RepeatRule | null;
   remindMinutesBefore: number | null;
   completedAt: string | null;
@@ -70,6 +75,8 @@ export type HabitRecord = {
   cadence: "daily" | "weekly";
   goal: number;
   sort: number;
+  archivedAt?: string | null;
+  reminderTime?: string | null;
   updatedAt: string;
   deletedAt: string | null;
 };
@@ -91,6 +98,7 @@ export type CountdownRecord = {
   unit: "day" | "week" | "month" | "year";
   color: string;
   imageKey: string | null;
+  remindDaysBefore?: number | null;
   sort: number;
   updatedAt: string;
   deletedAt: string | null;
@@ -101,6 +109,7 @@ export type Kind = "lists" | "tasks" | "tags" | "habits" | "habitChecks" | "coun
 export const KINDS: Kind[] = ["lists", "tasks", "tags", "habits", "habitChecks", "countdowns"];
 
 export type Snapshot = {
+  schemaVersion?: number;
   revision: number;
   reset: boolean;
   lists: ListRecord[];
@@ -118,13 +127,16 @@ export type ManifestChange = {
 };
 
 export type Manifest = {
+  schemaVersion?: number;
   revision: number;
   updatedAt: string;
   changes: ManifestChange[];
+  mutations?: string[];
 };
 
 export function emptySnapshot(revision = 0): Snapshot {
   return {
+    schemaVersion: SCHEMA_VERSION,
     revision,
     reset: true,
     lists: [],
@@ -173,7 +185,23 @@ export function daysBetween(from: string, to: string): number {
 }
 
 export function nextDue(dueOn: string, rule: RepeatRule, from = dueOn): string {
-  const every = Math.max(1, rule.every);
+  const every = Math.max(1, Math.floor(rule.every) || 1);
+  const weekdays = [...new Set((rule.weekdays ?? []).filter((day) => day >= 0 && day <= 6))];
+  if (rule.unit === "week" && weekdays.length > 0) {
+    if (dueOn > from) return dueOn;
+    const origin = startOfWeek(dueOn);
+    let cursor = dueOn;
+    let guard = 0;
+    while (guard < 4000) {
+      guard += 1;
+      cursor = addDays(cursor, 1);
+      if (!weekdays.includes(parseDay(cursor).getDay())) continue;
+      const weeks = Math.floor(daysBetween(origin, startOfWeek(cursor)) / 7);
+      if (weeks % every !== 0) continue;
+      if (cursor > from) return cursor;
+    }
+    return cursor;
+  }
   let cursor = dueOn;
   let guard = 0;
   while (cursor <= from && guard < 4000) {
@@ -226,16 +254,40 @@ export function alive<T extends { deletedAt: string | null }>(records: T[]): T[]
   return records.filter((record) => record.deletedAt == null);
 }
 
+export function visibleLists(lists: ListRecord[]): ListRecord[] {
+  return alive(lists).filter((list) => !list.archivedAt).sort((a, b) => a.sort - b.sort);
+}
+
+export type SortMode = "manual" | "date" | "priority" | "title";
+
+export function sortTasks(tasks: TaskRecord[], mode: SortMode): TaskRecord[] {
+  const copy = tasks.slice();
+  if (mode === "date") copy.sort((a, b) => (a.dueOn ?? "9999-99-99").localeCompare(b.dueOn ?? "9999-99-99") || a.sort - b.sort);
+  else if (mode === "priority") copy.sort((a, b) => b.priority - a.priority || a.sort - b.sort);
+  else if (mode === "title") copy.sort((a, b) => a.title.localeCompare(b.title) || a.sort - b.sort);
+  else copy.sort((a, b) => a.sort - b.sort);
+  return copy;
+}
+
+export function searchTasks(tasks: TaskRecord[], query: string): TaskRecord[] {
+  const needle = query.trim().toLowerCase();
+  if (!needle) return tasks;
+  return tasks.filter((task) => `${task.title} ${task.notes}`.toLowerCase().includes(needle));
+}
+
 export function taskOpen(task: TaskRecord): boolean {
   return task.deletedAt == null && task.completedAt == null;
 }
 
 export function matchesView(task: TaskRecord, view: string, today = dayISO(new Date())): boolean {
+  if (view === "trash") return task.deletedAt != null;
+  if (view === "completed") return task.deletedAt == null && task.completedAt != null;
   if (!taskOpen(task)) return false;
   if (view === "inbox") return task.listId == null;
   if (view === "today") return task.dueOn != null && task.dueOn <= today;
   if (view === "tomorrow") return task.dueOn === addDays(today, 1);
   if (view === "week") return task.dueOn != null && task.dueOn <= addDays(today, 6);
+  if (view === "overdue") return task.dueOn != null && task.dueOn < today;
   if (view.startsWith("list:")) return task.listId === view.slice(5);
   if (view.startsWith("tag:")) return task.tagIds.includes(view.slice(4));
   return false;

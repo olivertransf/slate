@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { forgetGoogle } from "@/lib/google-client";
 import { patchUi, useUiSettings } from "@/lib/ui-settings";
 
 type CalendarInfo = { id: string; name: string; color: string; primary: boolean };
@@ -21,6 +22,7 @@ export function SettingsView({ notice }: { notice: string | null }) {
 
   async function disconnect() {
     await fetch("/api/google/logout", { method: "POST" });
+    forgetGoogle();
     setStatus((current) => current ? { ...current, connected: false, calendars: [] } : current);
   }
 

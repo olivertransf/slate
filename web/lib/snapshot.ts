@@ -1,5 +1,8 @@
+import { logEvent } from "./log";
+import { mergeLists, preferRecord, sameRecord } from "./merge";
 import {
   KINDS,
+  SCHEMA_VERSION,
   emptySnapshot,
   type Kind,
   type Manifest,
@@ -19,7 +22,13 @@ export async function readManifest(): Promise<Manifest> {
   const text = await getText(MANIFEST_KEY);
   if (!text) return { revision: 0, updatedAt: new Date(0).toISOString(), changes: [] };
   const parsed = JSON.parse(text) as Manifest;
-  return { revision: parsed.revision ?? 0, updatedAt: parsed.updatedAt, changes: parsed.changes ?? [] };
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    revision: parsed.revision ?? 0,
+    updatedAt: parsed.updatedAt,
+    changes: parsed.changes ?? [],
+    mutations: parsed.mutations ?? [],
+  };
 }
 
 export async function readRevision(): Promise<number> {
@@ -66,32 +75,69 @@ export async function readSnapshot(after = 0): Promise<Snapshot> {
   return snapshot;
 }
 
-export async function writeRecords(baseRevision: number, incoming: Partial<Snapshot>): Promise<Snapshot | { conflict: Snapshot }> {
+const MUTATION_LIMIT = 200;
+
+export async function writeRecords(
+  baseRevision: number,
+  incoming: Partial<Snapshot>,
+  mutationId?: string,
+): Promise<Snapshot | { conflict: Snapshot }> {
   const manifest = await readManifest();
+  const mutations = manifest.mutations ?? [];
+  if (mutationId && mutations.includes(mutationId)) {
+    logEvent("sync.duplicate", { revision: manifest.revision });
+    const snapshot = emptySnapshot(manifest.revision);
+    snapshot.reset = false;
+    return snapshot;
+  }
   if (baseRevision !== manifest.revision) {
+    logEvent("sync.conflict", { baseRevision, revision: manifest.revision });
     return { conflict: await readSnapshot(baseRevision) };
   }
   const nextRevision = manifest.revision + 1;
   const changes = [...manifest.changes];
+  let wrote = false;
+  const applied = emptySnapshot(nextRevision);
+  applied.reset = false;
   for (const kind of KINDS) {
     const records = incoming[kind] ?? [];
+    const winners: Snapshot[Kind] = [];
     for (const record of records) {
-      await putText(recordKey(kind, record.id), JSON.stringify(record));
-      changes.push({ revision: nextRevision, kind, id: record.id });
+      const text = await getText(recordKey(kind, record.id));
+      const existing = text ? (JSON.parse(text) as Snapshot[Kind][number]) : undefined;
+      const chosen = preferRecord(existing, record);
+      if (!existing || !sameRecord(existing, chosen)) {
+        await putText(recordKey(kind, record.id), JSON.stringify(chosen));
+        changes.push({ revision: nextRevision, kind, id: record.id });
+        wrote = true;
+      }
+      winners.push(chosen as never);
     }
+    applied[kind] = winners as never;
   }
-  const nextManifest: Manifest = {
-    revision: nextRevision,
-    updatedAt: new Date().toISOString(),
-    changes: changes.slice(-CHANGE_LIMIT),
-  };
-  await putText(MANIFEST_KEY, JSON.stringify(nextManifest));
-  await putText(REVISION_KEY, String(nextRevision));
-  const snapshot = emptySnapshot(nextRevision);
-  snapshot.reset = false;
+  const revision = wrote ? nextRevision : manifest.revision;
+  applied.revision = revision;
+  if (wrote || mutationId) {
+    const nextManifest: Manifest = {
+      schemaVersion: SCHEMA_VERSION,
+      revision,
+      updatedAt: new Date().toISOString(),
+      changes: changes.slice(-CHANGE_LIMIT),
+      mutations: mutationId ? [...mutations, mutationId].slice(-MUTATION_LIMIT) : mutations,
+    };
+    await putText(MANIFEST_KEY, JSON.stringify(nextManifest));
+    await putText(REVISION_KEY, String(revision));
+  }
+  logEvent("sync.write", { revision, wrote, kinds: KINDS.filter((kind) => (incoming[kind]?.length ?? 0) > 0).join(",") });
+  return applied;
+}
+
+export function mergeSnapshot(local: Snapshot, remote: Snapshot): Snapshot {
+  if (remote.reset) return { ...remote, schemaVersion: SCHEMA_VERSION };
+  const next = emptySnapshot(remote.revision);
+  next.reset = false;
   for (const kind of KINDS) {
-    const records = incoming[kind];
-    if (records) snapshot[kind] = records as never;
+    next[kind] = mergeLists(local[kind], remote[kind]) as never;
   }
-  return snapshot;
+  return next;
 }

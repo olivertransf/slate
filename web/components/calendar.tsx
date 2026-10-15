@@ -16,38 +16,17 @@ import {
   type ListRecord,
   type TaskRecord,
 } from "@/lib/model";
+import { GOOGLE_CHANGED, rememberGoogle, storedGoogle, type GEvent } from "@/lib/google-client";
 import { Check } from "./check";
 import { today, usePlanner } from "./planner-context";
 
 type Mode = "month" | "weeks" | "week" | "day" | "agenda";
-
-type GEvent = {
-  id: string;
-  title: string;
-  day: string;
-  time: string | null;
-  allDay: boolean;
-  color: string;
-  calendarId: string;
-  calendar: string;
-  link: string;
-};
 
 type Detail =
   | { kind: "event"; event: GEvent }
   | { kind: "countdown"; item: CountdownRecord; day: string };
 
 const MODES: Mode[] = ["month", "weeks", "week", "day", "agenda"];
-const GOOGLE_FRESH_MS = 120_000;
-const googleCache: { start: string; end: string; at: number; events: GEvent[] }[] = [];
-
-function cachedGoogle(start: string, end: string): GEvent[] | null {
-  const now = Date.now();
-  const hit = googleCache.find((item) => item.start <= start && item.end >= end && now - item.at < GOOGLE_FRESH_MS);
-  if (!hit) return null;
-  return hit.events.filter((event) => event.day >= start && event.day < end);
-}
-
 export function CalendarView({
   onSelect,
 }: {
@@ -55,15 +34,20 @@ export function CalendarView({
 }) {
   const { data, save, completeTask } = usePlanner();
   const settings = useUiSettings();
-  const [mode, setMode] = useState<Mode>("weeks");
+  const [mode, setMode] = useState<Mode>(() => {
+    if (typeof window === "undefined") return "weeks";
+    const stored = window.sessionStorage.getItem("slate-cal-mode");
+    return stored === "month" || stored === "weeks" || stored === "week" || stored === "day" || stored === "agenda" ? stored : "weeks";
+  });
   const [shownWeeks, setShownWeeks] = useState(settings.calWeeks);
-  const [anchor, setAnchor] = useState(today());
+  const [anchor, setAnchor] = useState(() => (typeof window === "undefined" ? today() : window.sessionStorage.getItem("slate-cal-anchor") || today()));
   const [visibleDay, setVisibleDay] = useState(startOfWeek(today()));
   const [focus, setFocus] = useState(0);
   const [detailed, setDetailed] = useState(true);
   const [hourHeight, setHourHeight] = useState(48);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [events, setEvents] = useState<GEvent[]>([]);
+  const [googleGen, setGoogleGen] = useState(0);
   const [span, setSpan] = useState(() => ({
     start: addDays(startOfWeek(today()), -28),
     end: addDays(startOfWeek(today()), 70),
@@ -82,27 +66,36 @@ export function CalendarView({
   }, [mode, anchor, span]);
 
   useEffect(() => {
+    window.sessionStorage.setItem("slate-cal-mode", mode);
+    window.sessionStorage.setItem("slate-cal-anchor", anchor);
+  }, [mode, anchor]);
+
+  useEffect(() => {
     if (!settings.showGoogle) {
       setEvents([]);
       return;
     }
     const visible = (items: GEvent[]) => items.filter((event) => !settings.hiddenCalendars.includes(event.calendarId));
-    const cached = cachedGoogle(range.start, range.end);
-    if (cached) {
-      setEvents(visible(cached));
-      return;
-    }
+    const stored = storedGoogle(range.start, range.end);
+    setEvents(visible(stored.events));
+    if (stored.fresh) return;
     const controller = new AbortController();
     void fetch(`/api/google/events?start=${range.start}&end=${range.end}`, { signal: controller.signal })
-      .then(async (response) => (response.ok ? response.json() as Promise<{ events: GEvent[] }> : { events: [] }))
+      .then(async (response) => (response.ok ? response.json() as Promise<{ events: GEvent[] }> : null))
       .then((payload) => {
-        googleCache.push({ start: range.start, end: range.end, at: Date.now(), events: payload.events });
-        if (googleCache.length > 8) googleCache.shift();
-        setEvents(visible(payload.events));
+        if (!payload) return;
+        rememberGoogle(range.start, range.end, payload.events);
+        setEvents(visible(storedGoogle(range.start, range.end).events));
       })
       .catch(() => undefined);
     return () => controller.abort();
-  }, [range.start, range.end, settings.showGoogle, settings.hiddenCalendars]);
+  }, [range.start, range.end, settings.showGoogle, settings.hiddenCalendars, googleGen]);
+
+  useEffect(() => {
+    const bump = () => setGoogleGen((value) => value + 1);
+    window.addEventListener(GOOGLE_CHANGED, bump);
+    return () => window.removeEventListener(GOOGLE_CHANGED, bump);
+  }, []);
 
   const spanTimer = useRef<number | null>(null);
   const pendingWeeks = useRef<number | null>(null);
@@ -132,7 +125,7 @@ export function CalendarView({
       pendingWeeks.current = next;
       return next;
     });
-    setMode("weeks");
+    if (mode !== "month") setMode("weeks");
   }
 
   function chooseMode(next: Mode) {
@@ -341,12 +334,17 @@ function WeekBoard({
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    const board = el;
     let pinch = 0;
+    let lastY = 0;
     let gestureScale = 1;
-    function distance(touches: TouchList) {
+    function fingers(touches: TouchList) {
       const [a, b] = [touches[0], touches[1]];
-      if (!a || !b) return 0;
-      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+      if (!a || !b) return null;
+      return {
+        distance: Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY),
+        y: (a.clientY + b.clientY) / 2,
+      };
     }
     function wheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
@@ -354,19 +352,23 @@ function WeekBoard({
       onZoom(event.deltaY > 0 ? 1 : -1);
     }
     function touchStart(event: TouchEvent) {
-      if (event.touches.length === 2) pinch = distance(event.touches);
+      const point = fingers(event.touches);
+      pinch = point?.distance ?? 0;
+      lastY = point?.y ?? 0;
     }
     function touchMove(event: TouchEvent) {
-      if (event.touches.length !== 2 || pinch === 0) return;
+      const point = fingers(event.touches);
+      if (!point || pinch === 0) return;
       event.preventDefault();
-      const next = distance(event.touches);
-      const ratio = next / pinch;
+      board.scrollTop -= point.y - lastY;
+      lastY = point.y;
+      const ratio = point.distance / pinch;
       if (ratio > 1.12) {
         onZoom(-1);
-        pinch = next;
+        pinch = point.distance;
       } else if (ratio < 0.89) {
         onZoom(1);
-        pinch = next;
+        pinch = point.distance;
       }
     }
     function touchEnd() {
@@ -388,19 +390,19 @@ function WeekBoard({
         gestureScale = scale;
       }
     }
-    el.addEventListener("wheel", wheel, { passive: false });
-    el.addEventListener("touchstart", touchStart, { passive: true });
-    el.addEventListener("touchmove", touchMove, { passive: false });
-    el.addEventListener("touchend", touchEnd);
-    el.addEventListener("gesturestart", gestureStart);
-    el.addEventListener("gesturechange", gestureChange);
+    board.addEventListener("wheel", wheel, { passive: false });
+    board.addEventListener("touchstart", touchStart, { passive: true });
+    board.addEventListener("touchmove", touchMove, { passive: false });
+    board.addEventListener("touchend", touchEnd);
+    board.addEventListener("gesturestart", gestureStart);
+    board.addEventListener("gesturechange", gestureChange);
     return () => {
-      el.removeEventListener("wheel", wheel);
-      el.removeEventListener("touchstart", touchStart);
-      el.removeEventListener("touchmove", touchMove);
-      el.removeEventListener("touchend", touchEnd);
-      el.removeEventListener("gesturestart", gestureStart);
-      el.removeEventListener("gesturechange", gestureChange);
+      board.removeEventListener("wheel", wheel);
+      board.removeEventListener("touchstart", touchStart);
+      board.removeEventListener("touchmove", touchMove);
+      board.removeEventListener("touchend", touchEnd);
+      board.removeEventListener("gesturestart", gestureStart);
+      board.removeEventListener("gesturechange", gestureChange);
     };
   }, [onZoom]);
 
@@ -711,7 +713,7 @@ function ItemDetail({ detail, onClose }: { detail: Detail; onClose: () => void }
     ? (detail.event.allDay || !detail.event.time ? "All day" : formatTime(detail.event.time))
     : `${countdownAmount(detail.item, day)} ${detail.item.unit}s`;
   return (
-    <aside className="cal-detail" role="dialog" aria-label={title}>
+    <aside className="cal-detail" role="dialog" aria-modal="true" aria-label={title}>
       <div className="cal-detail-bar">
         <button type="button" onClick={onClose} aria-label="Close">×</button>
       </div>

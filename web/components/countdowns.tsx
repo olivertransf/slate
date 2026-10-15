@@ -7,7 +7,7 @@ import { newId, today, usePlanner } from "./planner-context";
 const UNITS = ["day", "week", "month", "year"] as const;
 const COLORS = ["#4E81FB", "#22A06B", "#E5484D", "#F5A524", "#8C5EFA", "#12A594"];
 
-export function CountdownView() {
+export function CountdownView({ addOpen = false, onAddClose }: { addOpen?: boolean; onAddClose?: () => void }) {
   const { data, save } = usePlanner();
   const [selected, setSelected] = useState<string | null>(null);
   const [title, setTitle] = useState("");
@@ -34,6 +34,7 @@ export function CountdownView() {
     save("countdowns", record);
     setSelected(record.id);
     setTitle("");
+    onAddClose?.();
   }
 
   function remove(record: CountdownRecord) {
@@ -47,29 +48,29 @@ export function CountdownView() {
         <h1>Countdowns</h1>
       </header>
       <div className="flow-body">
-        <form className="add-row" onSubmit={add}>
-          <input name="title" aria-label="Countdown title" placeholder="New countdown" value={title} onChange={(event) => setTitle(event.target.value)} />
-          <button className="primary" type="submit">Add</button>
-        </form>
-        {items.length === 0 && <p className="hint">Name something and press Enter. Set the date on the card.</p>}
+        {addOpen && (
+          <form className="add-sheet" onSubmit={add}>
+            <button type="button" className="sheet-backdrop" aria-label="Close" onClick={onAddClose} />
+            <div className="sheet-card" role="dialog" aria-modal="true" aria-label="New countdown">
+              <input name="title" aria-label="Countdown title" placeholder="New countdown" value={title} autoFocus onChange={(event) => setTitle(event.target.value)} />
+              <div className="sheet-tools"><button className="primary" type="submit">Add</button></div>
+            </div>
+          </form>
+        )}
+        {items.length === 0 && <p className="hint">Tap + and name a countdown. Set the date on the card.</p>}
         <div className={current ? "split" : ""}>
-          <div className="cards">
+          <div className="count-list">
             {items.map((item) => {
               const amount = countdownAmount(item, today());
               return (
-                <div key={item.id} className={item.id === selected ? "count-card selected" : "count-card"} onClick={() => setSelected(item.id === selected ? null : item.id)}>
-                  <i className="accent" style={{ background: item.color }} />
-                  {item.imageKey && <img className="photo" alt="" src={`/api/files?key=${encodeURIComponent(item.imageKey)}`} />}
-                  <div className="count-figure">
-                    <strong style={{ color: item.color }}>{amount}</strong>
+                <button key={item.id} type="button" className={item.id === selected ? "count-row selected" : "count-row"} onClick={() => setSelected(item.id === selected ? null : item.id)}>
+                  {item.imageKey ? <img className="count-icon" alt="" src={`/api/files?key=${encodeURIComponent(item.imageKey)}`} /> : <i className="count-icon" style={{ background: item.color }}>{item.title.slice(0, 1)}</i>}
+                  <span className="count-name">{item.title}</span>
+                  <span className="count-figure">
+                    <strong>{amount}</strong>
                     <em>{phrase(item, amount)}</em>
-                  </div>
-                  <div className="card-copy">
-                    <div className="title">{item.title}</div>
-                    <div className="habit-meta">{formatWhen(item.day)}</div>
-                  </div>
-                  <button type="button" className="card-delete" aria-label={`Delete ${item.title}`} onClick={(event) => { event.stopPropagation(); remove(item); }}>Delete</button>
-                </div>
+                  </span>
+                </button>
               );
             })}
           </div>
@@ -81,10 +82,11 @@ export function CountdownView() {
 }
 
 function phrase(record: CountdownRecord, amount: number): string {
-  const unit = record.unit + (Math.abs(amount) === 1 ? "" : "s");
-  if (amount === 0) return record.mode === "countup" ? "Started today" : "Today";
+  const name = record.unit === "day" ? "Day" : `${record.unit[0]?.toUpperCase() ?? ""}${record.unit.slice(1)}`;
+  const unit = Math.abs(amount) === 1 ? name : `${name}s`;
+  if (amount === 0) return record.mode === "countup" ? "Started" : "Today";
   if (record.mode === "countup") return `${unit} since`;
-  return `${unit} left`;
+  return `${unit} Left`;
 }
 
 function formatWhen(day: string): string {
@@ -113,6 +115,13 @@ function CountdownEditor({ record, onDelete }: { record: CountdownRecord; onDele
           <button key={unit} type="button" className={record.unit === unit ? "chip on" : "chip"} onClick={() => patch({ unit })}>{unit}</button>
         ))}
       </div>
+      <label>Remind days before
+        <input type="number" min={0} aria-label="Reminder days" value={record.remindDaysBefore ?? ""} onChange={(event) => patch({ remindDaysBefore: event.target.value === "" ? null : Number(event.target.value) })} />
+      </label>
+      <div className="seg">
+        <button type="button" onClick={() => patch({ sort: record.sort - 1 })}>Move earlier</button>
+        <button type="button" onClick={() => patch({ sort: record.sort + 1 })}>Move later</button>
+      </div>
       <label className="check-row">
         <input type="checkbox" checked={record.repeatYearly} onChange={(event) => patch({ repeatYearly: event.target.checked })} />
         Repeat every year
@@ -134,6 +143,7 @@ function CountdownEditor({ record, onDelete }: { record: CountdownRecord; onDele
             void fetch("/api/files", { method: "POST", body }).then(async (response) => {
               if (!response.ok) return;
               const payload = (await response.json()) as { key: string };
+              if (record.imageKey) void fetch(`/api/files?key=${encodeURIComponent(record.imageKey)}`, { method: "DELETE" });
               patch({ imageKey: payload.key });
             });
           }}
