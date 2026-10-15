@@ -1,5 +1,5 @@
 import { readToken, tokenValid } from "@/lib/session";
-import { readManifest, readSnapshot, writeRecords } from "@/lib/snapshot";
+import { readRevision, readSnapshot, writeRecords } from "@/lib/snapshot";
 import { KINDS, type Kind, type Snapshot } from "@/lib/model";
 
 export const runtime = "nodejs";
@@ -47,13 +47,13 @@ export async function GET(request: Request) {
   if (!authorized(request)) return denied();
   const url = new URL(request.url);
   if (url.searchParams.get("manifest") === "1") {
-    const manifest = await readManifest();
-    const etag = `"${manifest.revision}"`;
+    const revision = await readRevision();
+    const etag = `"${revision}"`;
     if (request.headers.get("if-none-match") === etag) {
       return new Response(null, { status: 304, headers: { ETag: etag, "Cache-Control": "no-store" } });
     }
     return Response.json(
-      { revision: manifest.revision },
+      { revision },
       { headers: { ETag: etag, "Cache-Control": "no-store" } },
     );
   }

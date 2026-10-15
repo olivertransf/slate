@@ -8,6 +8,7 @@ import {
 import { getText, listKeys, putText } from "./r2";
 
 const MANIFEST_KEY = "planner/manifest.json";
+const REVISION_KEY = "planner/revision.txt";
 const CHANGE_LIMIT = 400;
 
 function recordKey(kind: Kind, id: string): string {
@@ -19,6 +20,15 @@ export async function readManifest(): Promise<Manifest> {
   if (!text) return { revision: 0, updatedAt: new Date(0).toISOString(), changes: [] };
   const parsed = JSON.parse(text) as Manifest;
   return { revision: parsed.revision ?? 0, updatedAt: parsed.updatedAt, changes: parsed.changes ?? [] };
+}
+
+export async function readRevision(): Promise<number> {
+  const text = await getText(REVISION_KEY);
+  const parsed = text ? Number(text) : Number.NaN;
+  if (Number.isFinite(parsed)) return parsed;
+  const manifest = await readManifest();
+  await putText(REVISION_KEY, String(manifest.revision));
+  return manifest.revision;
 }
 
 export async function readSnapshot(after = 0): Promise<Snapshot> {
@@ -59,7 +69,7 @@ export async function readSnapshot(after = 0): Promise<Snapshot> {
 export async function writeRecords(baseRevision: number, incoming: Partial<Snapshot>): Promise<Snapshot | { conflict: Snapshot }> {
   const manifest = await readManifest();
   if (baseRevision !== manifest.revision) {
-    return { conflict: await readSnapshot(0) };
+    return { conflict: await readSnapshot(baseRevision) };
   }
   const nextRevision = manifest.revision + 1;
   const changes = [...manifest.changes];
@@ -76,5 +86,12 @@ export async function writeRecords(baseRevision: number, incoming: Partial<Snaps
     changes: changes.slice(-CHANGE_LIMIT),
   };
   await putText(MANIFEST_KEY, JSON.stringify(nextManifest));
-  return readSnapshot(baseRevision);
+  await putText(REVISION_KEY, String(nextRevision));
+  const snapshot = emptySnapshot(nextRevision);
+  snapshot.reset = false;
+  for (const kind of KINDS) {
+    const records = incoming[kind];
+    if (records) snapshot[kind] = records as never;
+  }
+  return snapshot;
 }

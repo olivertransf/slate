@@ -38,6 +38,15 @@ type Detail =
   | { kind: "countdown"; item: CountdownRecord; day: string };
 
 const MODES: Mode[] = ["month", "weeks", "week", "day", "agenda"];
+const GOOGLE_FRESH_MS = 120_000;
+const googleCache: { start: string; end: string; at: number; events: GEvent[] }[] = [];
+
+function cachedGoogle(start: string, end: string): GEvent[] | null {
+  const now = Date.now();
+  const hit = googleCache.find((item) => item.start <= start && item.end >= end && now - item.at < GOOGLE_FRESH_MS);
+  if (!hit) return null;
+  return hit.events.filter((event) => event.day >= start && event.day < end);
+}
 
 export function CalendarView({
   onSelect,
@@ -77,11 +86,19 @@ export function CalendarView({
       setEvents([]);
       return;
     }
+    const visible = (items: GEvent[]) => items.filter((event) => !settings.hiddenCalendars.includes(event.calendarId));
+    const cached = cachedGoogle(range.start, range.end);
+    if (cached) {
+      setEvents(visible(cached));
+      return;
+    }
     const controller = new AbortController();
     void fetch(`/api/google/events?start=${range.start}&end=${range.end}`, { signal: controller.signal })
       .then(async (response) => (response.ok ? response.json() as Promise<{ events: GEvent[] }> : { events: [] }))
       .then((payload) => {
-        setEvents(payload.events.filter((event) => !settings.hiddenCalendars.includes(event.calendarId)));
+        googleCache.push({ start: range.start, end: range.end, at: Date.now(), events: payload.events });
+        if (googleCache.length > 8) googleCache.shift();
+        setEvents(visible(payload.events));
       })
       .catch(() => undefined);
     return () => controller.abort();

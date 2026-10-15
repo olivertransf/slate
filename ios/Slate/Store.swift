@@ -35,6 +35,7 @@ final class PlannerStore {
     private var token: String?
     private var pending: [String: Pending] = [:]
     private var flushing = false
+    private var googleCache: [GoogleCache] = []
 
     func boot() async {
         token = Keychain.load()
@@ -45,9 +46,13 @@ final class PlannerStore {
         }
         ready = true
         while !Task.isCancelled {
-            try? await Task.sleep(for: .seconds(2.5))
+            try? await Task.sleep(for: .seconds(8))
             await pull()
         }
+    }
+
+    func refresh() async {
+        await pull()
     }
 
     func unlock(passphrase: String) async -> String? {
@@ -161,7 +166,7 @@ final class PlannerStore {
             apply(snapshot, replace: snapshot.reset)
             error = nil
         } catch let APIError.conflict(snapshot) {
-            apply(snapshot, replace: true)
+            apply(snapshot, replace: snapshot.reset)
             for (key, value) in batch where pending[key] == nil { pending[key] = value }
             flushing = false
             syncing = false
@@ -192,15 +197,40 @@ final class PlannerStore {
             countdowns = merge(countdowns, snapshot.countdowns)
         }
         revision = snapshot.revision
-        if let data = try? JSONEncoder().encode(snapshot) {
-            UserDefaults.standard.set(data, forKey: "slate.cache")
+        let library = Snapshot(
+            revision: revision,
+            reset: true,
+            lists: lists,
+            tasks: tasks,
+            tags: tags,
+            habits: habits,
+            habitChecks: habitChecks,
+            countdowns: countdowns
+        )
+        if let data = try? JSONEncoder().encode(library) {
+            try? FileManager.default.createDirectory(at: cacheURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? data.write(to: cacheURL, options: .atomic)
+            UserDefaults.standard.removeObject(forKey: "slate.cache")
         }
         scheduleReminders()
     }
 
+    private var cacheURL: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("Slate", isDirectory: true)
+            .appendingPathComponent("library.json")
+    }
+
     private func loadCache() -> Snapshot? {
-        guard let data = UserDefaults.standard.data(forKey: "slate.cache") else { return nil }
-        return try? JSONDecoder().decode(Snapshot.self, from: data)
+        if let data = try? Data(contentsOf: cacheURL),
+           let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
+           snapshot.reset {
+            return snapshot
+        }
+        guard let data = UserDefaults.standard.data(forKey: "slate.cache"),
+              let snapshot = try? JSONDecoder().decode(Snapshot.self, from: data),
+              snapshot.reset else { return nil }
+        return snapshot
     }
 
     private func client() -> APIClient? {
@@ -266,8 +296,16 @@ final class PlannerStore {
     }
 
     func googleEvents(start: String, end: String) async -> [GoogleEvent] {
-        guard let client = client() else { return [] }
-        return (try? await client.googleEvents(start: start, end: end)) ?? []
+        if let hit = freshGoogle(start: start, end: end) { return hit }
+        guard let client = client() else { return storedGoogle(start: start, end: end) }
+        do {
+            let events = try await client.googleEvents(start: start, end: end)
+            googleCache.append(GoogleCache(start: start, end: end, at: .now, events: events))
+            if googleCache.count > 8 { googleCache.removeFirst(googleCache.count - 8) }
+            return events
+        } catch {
+            return storedGoogle(start: start, end: end)
+        }
     }
 
     func googleStartURL() async -> URL? {
@@ -281,11 +319,30 @@ final class PlannerStore {
     }
 
     private func stamp() -> String { ISO8601DateFormatter().string(from: .now) }
+
+    private func freshGoogle(start: String, end: String) -> [GoogleEvent]? {
+        guard let hit = googleCache.last(where: { $0.start <= start && $0.end >= end && Date().timeIntervalSince($0.at) < 120 }) else {
+            return nil
+        }
+        return hit.events.filter { $0.day >= start && $0.day < end }
+    }
+
+    private func storedGoogle(start: String, end: String) -> [GoogleEvent] {
+        guard let hit = googleCache.last(where: { $0.start <= start && $0.end >= end }) else { return [] }
+        return hit.events.filter { $0.day >= start && $0.day < end }
+    }
 }
 
 private struct Pending {
     var kind: String
     var object: Any
+}
+
+private struct GoogleCache {
+    var start: String
+    var end: String
+    var at: Date
+    var events: [GoogleEvent]
 }
 
 private func upsert<T: Identifiable>(_ list: [T], _ item: T) -> [T] where T.ID == String {

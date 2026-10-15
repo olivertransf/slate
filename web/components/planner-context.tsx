@@ -50,7 +50,7 @@ function emptyRecords(): Records {
 
 async function readCache(): Promise<{ revision: number; data: Records } | null> {
   return new Promise((resolve) => {
-    const timer = window.setTimeout(() => resolve(null), 400);
+    const timer = window.setTimeout(() => resolve(null), 4000);
     const request = indexedDB.open(DB_NAME, 1);
     request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE);
     request.onerror = () => {
@@ -205,10 +205,15 @@ export function PlannerProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     if (!unlocked) return;
-    const timer = window.setInterval(() => {
+    const update = () => {
       if (document.visibilityState === "visible") void pull();
-    }, 2500);
-    return () => window.clearInterval(timer);
+    };
+    document.addEventListener("visibilitychange", update);
+    const timer = window.setInterval(update, 8000);
+    return () => {
+      document.removeEventListener("visibilitychange", update);
+      window.clearInterval(timer);
+    };
   }, [unlocked, pull]);
 
   const unlock = useCallback(async (passphrase: string) => {
