@@ -1,0 +1,27 @@
+---
+description: Slate list, calendar, habit, and countdown layout
+globs: web/**/*.{tsx,css},ios/Slate/**/*.swift
+alwaysApply: false
+---
+
+# Slate look
+
+Match the supplied TickTick screenshots. Keep Slate branding and system icons.
+
+- Task lists are a large title and one rounded card of checkbox rows. Dates sit on the right in blue (`Today`, `Tomorrow`, `Oct 19`). Do not put a search field in the list.
+- Adding is a blue circle at the bottom right. On iPhone it opens `QuickAddComposer`: a compact card sitting on the keyboard over a dimmed screen. It is never a full-screen or detent sheet. It has a title line (`What would you like to do?`), a description line, and an icon row (calendar, list, priority, tag), with a blue up-arrow send button on the right. Do not leave an add field at the top of the list.
+- Natural-language words in the title (`tmrw`, `5pm`, `#tag`, `p1`) are highlighted blue inline. The calendar icon turns blue and shows the parsed day (`Tomorrow`).
+- The iPhone app uses the native SwiftUI `TabView` with four `Tab` items: Tasks, Calendar, Habits, Countdown. There is no More tab. Do not replace it with a custom drawn dock. The mobile website keeps its floating capsule dock.
+- The list sidebar is Today, Tomorrow, Next 7 Days, then lists with counts, Archived Lists, Completed, and Trash. The selected row is a dark rounded pill.
+- Date carousels (habits, calendar day view) always start on Sunday and page one full week per swipe. Do not scroll day by day. Past dates are tappable, and check-ins apply to the selected day. iOS uses the shared `WeekPager`.
+- Every hamburger button opens the lists menu as a left slide-in drawer over a dimmed screen (tap outside or swipe left to close). Picking a list closes it and shows Tasks. Do not use a tab or a sheet for it.
+- Calendar must let you complete tasks (checkbox in the day and list views, context menu in month) and add tasks (blue + dated to the selected day).
+- The app reopens where it was left: tab, task list or smart view, and calendar view mode are kept in `@AppStorage`. The selected calendar day is kept within the same day and resets to today on a new day.
+- Pulling down on the iPhone calendar's week strip (or overscrolling the Today list, or tapping the grabber) expands it into a full month grid. Swipe sideways to change months, tap a day to select it and collapse back to that week. Pushing up or scrolling the list collapses it.
+- iOS 26 toolbar items already get a Liquid Glass circle. Toolbar button labels are bare SF Symbols with no `.background`, `.frame`, or custom circle (that draws a second outline). Custom headers outside a toolbar use `.glassEffect(.regular.interactive(), in: Circle()/Capsule())` to match.
+- Google Calendar events are cached per day on disk (iOS `google.json`, web `localStorage`) and shown immediately, then refreshed in the background when older than 2 minutes. Never block the calendar on a Google status or events request, and never overwrite the cache with an empty list from a failed request.
+- The app opens instantly from the on-device cache. `ready` and `unlocked` are set before any network call, and sync runs afterward.
+- On iPhone, Calendar opens as a scrollable week strip, then a Today card and a Habit card. Month is the separate view from the calendar button, and that view still pinches to zoom and scrolls.
+- The iPhone calendar header has a round hamburger on the left, the month name over `Today` in the center, and one capsule on the right holding a view icon and an ellipsis. The week strip shows `W42` under Sunday and gray dots under busy days. Today-card rows have a colored left bar (list or event color), a `G` badge for Google events or a square checkbox for tasks, a bold title, a blue time or `Today` on the right, and a repeat icon under it for repeating tasks.
+- Calendar month view scrolls vertically through months and still pinches to zoom. Pinch changes how many weeks fit. One-finger or trackpad scroll keeps moving through months. Do not let either gesture turn the other off.
+- Countdowns are dense rows: icon or image, truncated title, and a large day count that stays visible (`72` / `Days`).
