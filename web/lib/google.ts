@@ -32,8 +32,16 @@ type TokenResponse = {
   error?: string;
 };
 
+function clientId(): string {
+  return (process.env.GOOGLE_CLIENT_ID ?? "").trim();
+}
+
+function clientSecret(): string {
+  return (process.env.GOOGLE_CLIENT_SECRET ?? "").trim();
+}
+
 export function googleConfigured(): boolean {
-  return Boolean(process.env.GOOGLE_CLIENT_ID && process.env.GOOGLE_CLIENT_SECRET);
+  return Boolean(clientId() && clientSecret());
 }
 
 export function redirectUri(request: Request): string {
@@ -77,7 +85,7 @@ export function readRefresh(request: Request): string | null {
 
 export function authUrl(request: Request, state: string): string {
   const params = new URLSearchParams({
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
+    client_id: clientId(),
     redirect_uri: redirectUri(request),
     response_type: "code",
     scope: SCOPE,
@@ -101,8 +109,8 @@ async function postToken(body: URLSearchParams): Promise<TokenResponse> {
 export async function exchangeCode(request: Request, code: string): Promise<TokenResponse> {
   return postToken(new URLSearchParams({
     code,
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    client_id: clientId(),
+    client_secret: clientSecret(),
     redirect_uri: redirectUri(request),
     grant_type: "authorization_code",
   }));
@@ -111,8 +119,8 @@ export async function exchangeCode(request: Request, code: string): Promise<Toke
 async function accessToken(refresh: string): Promise<string | null> {
   const payload = await postToken(new URLSearchParams({
     refresh_token: refresh,
-    client_id: process.env.GOOGLE_CLIENT_ID ?? "",
-    client_secret: process.env.GOOGLE_CLIENT_SECRET ?? "",
+    client_id: clientId(),
+    client_secret: clientSecret(),
     grant_type: "refresh_token",
   }));
   return payload.access_token ?? null;
