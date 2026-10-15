@@ -377,9 +377,10 @@ struct TaskSidebar: View {
 struct SettingsScreen: View {
     @Environment(PlannerStore.self) private var store
     @AppStorage("slate.theme") private var theme = "system"
-    @State private var status: GoogleStatus?
     @State private var message = ""
     @State private var signingIn = false
+
+    private var status: GoogleStatus? { store.googleAccount }
 
     var body: some View {
         Form {
@@ -394,10 +395,7 @@ struct SettingsScreen: View {
                 if status?.connected == true {
                     LabeledContent("Account", value: accountName)
                     Button("Sign out", role: .destructive) {
-                        Task {
-                            await store.googleLogout()
-                            status = await store.googleStatus()
-                        }
+                        Task { await store.googleLogout() }
                     }
                 } else {
                     Button(signingIn ? "Waiting for Google" : "Sign in with Google") {
@@ -415,7 +413,7 @@ struct SettingsScreen: View {
             }
         }
         .navigationTitle("Settings")
-        .task { status = await store.googleStatus() }
+        .task { await store.refreshGoogle() }
     }
 
     private var accountName: String {
@@ -436,8 +434,12 @@ struct SettingsScreen: View {
             return
         }
         let ok = await GoogleLogin.shared.start(url: url)
-        status = await store.googleStatus()
-        message = ok ? "" : "Google sign-in was canceled. The redirect address for this server has to be allowed in Google Cloud."
+        await store.refreshGoogle()
+        if store.googleAccount?.connected == true {
+            message = ""
+        } else if !ok {
+            message = "Google sign-in was canceled. The redirect address for this server has to be allowed in Google Cloud."
+        }
     }
 }
 
@@ -797,7 +799,6 @@ struct CalendarScreen: View {
     @State private var mode = "month"
     @State private var anchor = Day.iso()
     @State private var google: [GoogleEvent] = []
-    @State private var loadedRange = ""
     @State private var pinchBase: CGFloat = 1
 
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
@@ -823,7 +824,7 @@ struct CalendarScreen: View {
         .background(palette.stage)
         .foregroundStyle(palette.ink)
         .toolbar(.hidden, for: .navigationBar)
-        .task(id: rangeKey) { await loadGoogle() }
+        .task(id: "\(rangeKey)|\(store.googleGeneration)") { await loadGoogle() }
         .onAppear { weeks = min(8, max(1, weeks)) }
     }
 
@@ -908,11 +909,10 @@ struct CalendarScreen: View {
     }
 
     private func loadGoogle() async {
-        guard rangeKey != loadedRange else { return }
+        await store.refreshGoogle()
         let parts = rangeKey.split(separator: "|").map(String.init)
         guard parts.count == 2 else { return }
         google = await store.googleEvents(start: parts[0], end: parts[1])
-        loadedRange = rangeKey
     }
 
     private var weekZoom: some Gesture {
@@ -1349,33 +1349,41 @@ struct CountdownScreen: View {
 
     var body: some View {
         let items = store.countdowns.filter { $0.deletedAt == nil }.sorted { $0.sort < $1.sort }
-        let columns = size == .compact
-            ? [GridItem(.flexible(), spacing: 12)]
-            : [GridItem(.adaptive(minimum: 240), spacing: 12)]
+        let columns = [GridItem(.adaptive(minimum: size == .compact ? 280 : 200), spacing: 12)]
         ScrollView {
             VStack(alignment: .leading, spacing: 16) {
-                Text("Countdown").font(.title2.bold()).frame(maxWidth: .infinity)
+                Text("Countdowns").font(.title2.bold()).frame(maxWidth: .infinity, alignment: .leading)
                 LazyVGrid(columns: columns, spacing: 12) {
                     ForEach(items) { item in
-                        let amount = amount(for: item)
-                        HStack(alignment: .center, spacing: 12) {
-                            VStack(alignment: .leading, spacing: 4) {
-                                Text(item.title).font(.headline).lineLimit(1)
-                                Text(phrase(item, amount))
-                                    .font(.caption)
-                                    .foregroundStyle(palette.muted)
-                            }
-                            Spacer(minLength: 8)
+                        let amount = Day.countdownAmount(item)
+                        Button { selected = item } label: {
+                        VStack(alignment: .leading, spacing: 8) {
                             Text("\(amount)")
-                                .font(.system(size: size == .compact ? 34 : 52, weight: .bold))
+                                .font(.system(size: 52, weight: .bold))
                                 .foregroundStyle(Color(hex: item.color))
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.4)
+                            Text(phrase(item, amount))
+                                .font(.caption)
+                                .foregroundStyle(palette.muted)
+                            Text(item.title)
+                                .font(.subheadline.weight(.semibold))
+                                .multilineTextAlignment(.leading)
+                                .lineLimit(2)
                         }
-                        .padding(16)
-                        .frame(maxWidth: .infinity, minHeight: size == .compact ? 72 : 140, alignment: .leading)
+                        .padding(EdgeInsets(top: 16, leading: 20, bottom: 16, trailing: 16))
+                        .frame(maxWidth: .infinity, minHeight: 168, alignment: .topLeading)
                         .background(palette.chip, in: RoundedRectangle(cornerRadius: 16))
-                        .onTapGesture { selected = item }
-                        .contextMenu {
+                        .overlay(alignment: .leading) {
+                            Rectangle().fill(Color(hex: item.color)).frame(width: 4)
+                        }
+                        }
+                        .buttonStyle(.plain)
+                        .overlay(alignment: .topTrailing) {
                             Button("Delete", role: .destructive) { remove(item) }
+                                .font(.caption)
+                                .buttonStyle(.borderless)
+                                .padding(8)
                         }
                     }
                 }
@@ -1383,6 +1391,7 @@ struct CountdownScreen: View {
             .padding(16)
             .padding(.bottom, 72)
         }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
         .overlay(alignment: .bottomTrailing) {
             Button { addOpen = true } label: {
                 Image(systemName: "plus")
@@ -1494,19 +1503,6 @@ struct CountdownScreen: View {
         }
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16))
-    }
-
-    private func amount(for record: CountdownRecord) -> Int {
-        let today = Day.iso()
-        let start = Day.parse(record.mode == "countup" ? record.day : today)
-        let end = Day.parse(record.mode == "countup" ? today : record.day)
-        let days = Calendar.current.dateComponents([.day], from: start, to: end).day ?? 0
-        switch record.unit {
-        case "week": return days / 7
-        case "month": return days / 30
-        case "year": return days / 365
-        default: return days
-        }
     }
 }
 

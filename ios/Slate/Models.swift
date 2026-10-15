@@ -156,6 +156,31 @@ enum Day {
         iso(Calendar.current.date(byAdding: .day, value: days, to: parse(value)) ?? .now)
     }
 
+    static func between(_ from: String, _ to: String) -> Int {
+        Calendar.current.dateComponents([.day], from: parse(from), to: parse(to)).day ?? 0
+    }
+
+    static func countdownAmount(_ record: CountdownRecord, today: String = iso()) -> Int {
+        var target = record.day
+        if record.repeatYearly, record.day.count >= 10 {
+            let year = Int(today.prefix(4)) ?? 1970
+            let monthDay = record.day.dropFirst(5)
+            let annual = "\(year)-\(monthDay)"
+            if record.mode == "countup" {
+                target = annual > today ? "\(year - 1)-\(monthDay)" : annual
+            } else {
+                target = annual >= today ? annual : "\(year + 1)-\(monthDay)"
+            }
+        }
+        let span = record.mode == "countup" ? between(target, today) : between(today, target)
+        switch record.unit {
+        case "week": return span / 7
+        case "month": return span / 30
+        case "year": return span / 365
+        default: return span
+        }
+    }
+
     private static var todayStamp = Date.distantPast
     private static var todayValue = ""
     private static var tomorrowValue = ""
