@@ -1,4 +1,4 @@
-import { createEvent, listEvents } from "@/lib/google";
+import { createEvent, listEvents, validZone } from "@/lib/google";
 import { refreshFor, sessionOk } from "@/lib/google-account";
 
 export const runtime = "nodejs";
@@ -15,7 +15,8 @@ export async function GET(request: Request) {
   const start = url.searchParams.get("start");
   const end = url.searchParams.get("end");
   if (!start || !end) return Response.json({ error: "Missing range." }, { status: 400 });
-  const events = await listEvents(refresh, start, end);
+  if (!DAY.test(start) || !DAY.test(end)) return Response.json({ error: "Bad range." }, { status: 400 });
+  const events = await listEvents(refresh, start, end, validZone(url.searchParams.get("tz")));
   if (!events) return Response.json({ events: [] });
   return Response.json({ events }, { headers: { "Cache-Control": "no-store" } });
 }
@@ -30,7 +31,7 @@ export async function POST(request: Request) {
   const time = typeof body?.time === "string" && TIME.test(body.time) ? body.time : null;
   if (!title || !DAY.test(day)) return Response.json({ error: "A title and a date are required." }, { status: 400 });
   const minutes = typeof body?.minutes === "number" && Number.isFinite(body.minutes) ? Math.min(24 * 60, Math.round(body.minutes)) : 60;
-  const timeZone = typeof body?.timeZone === "string" && body.timeZone.length < 64 ? body.timeZone : undefined;
+  const timeZone = validZone(typeof body?.timeZone === "string" ? body.timeZone : null);
   const notes = typeof body?.notes === "string" ? body.notes.slice(0, 8000) : undefined;
   const result = await createEvent(refresh, { title, notes, day, time, minutes, timeZone });
   if (result.ok) return Response.json({ event: result.event }, { headers: { "Cache-Control": "no-store" } });

@@ -41,7 +41,7 @@ struct APIClient {
     }
 
     func googleEvents(start: String, end: String) async throws -> [GoogleEvent] {
-        let (data, response) = try await URLSession.shared.data(for: make("/api/google/events?start=\(start)&end=\(end)"))
+        let (data, response) = try await URLSession.shared.data(for: make("/api/google/events?start=\(start)&end=\(end)&tz=\(TimeZone.current.identifier.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? "")"))
         try validate(response, data: data)
         return try JSONDecoder().decode(GoogleEventsBody.self, from: data).events
     }

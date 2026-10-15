@@ -496,7 +496,7 @@ final class PlannerStore {
     }
 
     private var googleURL: URL {
-        cacheURL.deletingLastPathComponent().appendingPathComponent("google.json")
+        cacheURL.deletingLastPathComponent().appendingPathComponent("google-v2.json")
     }
 
     private func googleRange(_ start: String, _ end: String) -> [String] {

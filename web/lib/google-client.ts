@@ -14,7 +14,7 @@ export type GEvent = {
 
 export const GOOGLE_CHANGED = "slate-google-changed";
 const GOOGLE_FRESH_MS = 120_000;
-const STORE_KEY = "slate-google-days-v1";
+const STORE_KEY = "slate-google-days-v2";
 type GoogleDay = { at: number; events: GEvent[] };
 let days: Record<string, GoogleDay> | null = null;
 let saveTimer: number | null = null;

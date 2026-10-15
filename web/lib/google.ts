@@ -155,16 +155,29 @@ export async function listCalendars(refresh: string): Promise<GoogleCalendar[] |
   return calendarsFor(token);
 }
 
-function localDay(value: string): string {
-  const date = new Date(value);
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${date.getFullYear()}-${month}-${day}`;
+export function validZone(value: string | null | undefined): string | undefined {
+  if (!value || value.length > 64) return undefined;
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: value });
+    return value;
+  } catch {
+    return undefined;
+  }
 }
 
-function localTime(value: string): string {
-  const date = new Date(value);
-  return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+function localParts(value: string, timeZone: string | undefined): { day: string; time: string } {
+  const parts = Object.fromEntries(
+    new Intl.DateTimeFormat("en-CA", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).formatToParts(new Date(value)).map((part) => [part.type, part.value]),
+  );
+  return { day: `${parts.year}-${parts.month}-${parts.day}`, time: `${parts.hour}:${parts.minute}` };
 }
 
 type RawEvent = {
@@ -175,25 +188,36 @@ type RawEvent = {
   end?: { date?: string; dateTime?: string };
 };
 
-export async function listEvents(refresh: string, start: string, end: string): Promise<GoogleEvent[] | null> {
+export async function listEvents(refresh: string, start: string, end: string, timeZone?: string): Promise<GoogleEvent[] | null> {
   const token = await accessToken(refresh);
   if (!token) return null;
   const calendars = await calendarsFor(token);
   if (!calendars) return null;
-  const timeMin = new Date(`${start}T00:00:00`).toISOString();
-  const timeMax = new Date(`${end}T00:00:00`).toISOString();
-  const batches = await Promise.all(calendars.slice(0, 8).map(async (calendar) => {
-    const params = new URLSearchParams({
-      timeMin,
-      timeMax,
-      singleEvents: "true",
-      orderBy: "startTime",
-      maxResults: "250",
-    });
-    const payload = await googleGet<{ items?: RawEvent[] }>(token, `/calendars/${encodeURIComponent(calendar.id)}/events?${params}`);
-    return (payload?.items ?? []).flatMap((event) => expand(event, calendar));
+  const timeMin = `${addDays(start, -1)}T00:00:00Z`;
+  const timeMax = `${addDays(end, 1)}T00:00:00Z`;
+  const batches = await Promise.all(calendars.slice(0, 30).map(async (calendar) => {
+    const items: RawEvent[] = [];
+    let pageToken: string | undefined;
+    for (let page = 0; page < 10; page += 1) {
+      const params = new URLSearchParams({
+        timeMin,
+        timeMax,
+        singleEvents: "true",
+        orderBy: "startTime",
+        maxResults: "2500",
+      });
+      if (pageToken) params.set("pageToken", pageToken);
+      const payload = await googleGet<{ items?: RawEvent[]; nextPageToken?: string }>(
+        token,
+        `/calendars/${encodeURIComponent(calendar.id)}/events?${params}`,
+      );
+      items.push(...(payload?.items ?? []));
+      pageToken = payload?.nextPageToken;
+      if (!pageToken) break;
+    }
+    return items.flatMap((event) => expand(event, calendar, timeZone));
   }));
-  return batches.flat();
+  return batches.flat().filter((event) => event.day >= start && event.day < end);
 }
 
 export type NewEvent = {
@@ -249,12 +273,12 @@ export async function createEvent(refresh: string, input: NewEvent): Promise<Cre
   const calendars = (await calendarsFor(token)) ?? [];
   const calendar = calendars.find((item) => item.id === calendarId || (calendarId === "primary" && item.primary))
     ?? { id: calendarId, name: "Calendar", color: "#4e81fb", primary: calendarId === "primary" };
-  const [event] = expand(raw, calendar);
+  const [event] = expand(raw, calendar, input.timeZone);
   if (!event) return { ok: false, reason: "failed" };
   return { ok: true, event };
 }
 
-function expand(event: RawEvent, calendar: GoogleCalendar): GoogleEvent[] {
+function expand(event: RawEvent, calendar: GoogleCalendar, timeZone: string | undefined): GoogleEvent[] {
   const start = event.start;
   const end = event.end;
   if (!start) return [];
@@ -276,11 +300,12 @@ function expand(event: RawEvent, calendar: GoogleCalendar): GoogleEvent[] {
     return days;
   }
   if (!start.dateTime) return [];
+  const local = localParts(start.dateTime, timeZone);
   return [{
     ...base,
     id: event.id ?? start.dateTime,
-    day: localDay(start.dateTime),
-    time: localTime(start.dateTime),
+    day: local.day,
+    time: local.time,
     allDay: false,
   }];
 }

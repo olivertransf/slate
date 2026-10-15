@@ -80,7 +80,8 @@ export function CalendarView({
     setEvents(visible(stored.events));
     if (stored.fresh) return;
     const controller = new AbortController();
-    void fetch(`/api/google/events?start=${range.start}&end=${range.end}`, { signal: controller.signal })
+    const tz = encodeURIComponent(Intl.DateTimeFormat().resolvedOptions().timeZone);
+    void fetch(`/api/google/events?start=${range.start}&end=${range.end}&tz=${tz}`, { signal: controller.signal })
       .then(async (response) => (response.ok ? response.json() as Promise<{ events: GEvent[] }> : null))
       .then((payload) => {
         if (!payload) return;

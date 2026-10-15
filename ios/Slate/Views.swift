@@ -1334,6 +1334,7 @@ struct CalendarScreen: View {
     @AppStorage("slate.calAnchor") private var anchor = Day.iso()
     @AppStorage("slate.calOpenedOn") private var openedOn = ""
     @State private var monthOpen = false
+    @State private var boardRow = 14
     @State private var google: [GoogleEvent] = []
     @State private var pinchBase: CGFloat = 1
     @State private var addOpen = false
@@ -1521,13 +1522,20 @@ struct CalendarScreen: View {
         case "list":
             return "\(anchor)|\(Day.add(anchor, days: 14))"
         case "focus":
-            let weekday = Calendar.current.component(.weekday, from: Day.parse(anchor)) - 1
-            let start = Day.add(anchor, days: -weekday)
-            return "\(start)|\(Day.add(start, days: 7))"
+            let first = String(anchor.prefix(7)) + "-01"
+            let weekday = Calendar.current.component(.weekday, from: Day.parse(first)) - 1
+            let start = Day.add(first, days: -weekday)
+            return "\(start)|\(Day.add(start, days: 42))"
         default:
-            let days = gridDays
-            return "\(days.first ?? anchor)|\(Day.add(days.last ?? anchor, days: 1))"
+            let block = max(0, boardRow / 4 * 4 - 4)
+            let start = Day.add(boardOrigin, days: block * 7)
+            return "\(start)|\(Day.add(start, days: 16 * 7))"
         }
+    }
+
+    private var boardOrigin: String {
+        let weekday = Calendar.current.component(.weekday, from: Day.parse(Day.iso())) - 1
+        return Day.add(Day.iso(), days: -weekday - 7 * 16)
     }
 
     private func columnDays(_ count: Int) -> [String] {
@@ -1730,7 +1738,7 @@ struct CalendarScreen: View {
     private func monthBoard(tasksByDay: [String: [TaskRecord]], eventsByDay: [String: [GoogleEvent]]) -> some View {
         let labels = ["S", "M", "T", "W", "T", "F", "S"]
         let weekday = Calendar.current.component(.weekday, from: Day.parse(Day.iso())) - 1
-        let origin = Day.add(Day.iso(), days: -weekday - 7 * 16)
+        let origin = boardOrigin
         let rows = (0..<48).map { Day.add(origin, days: $0 * 7) }
         return VStack(spacing: 0) {
             HStack(spacing: 0) {
@@ -1760,6 +1768,11 @@ struct CalendarScreen: View {
                     }
                 }
                 .simultaneousGesture(weekZoom)
+                .onScrollGeometryChange(for: Int.self) { geo in
+                    max(0, Int((geo.contentOffset.y + geo.contentInsets.top) / row))
+                } action: { _, top in
+                    boardRow = top
+                }
                 .onAppear {
                     let current = Day.add(Day.iso(), days: -weekday)
                     proxy.scrollTo(current, anchor: .center)
