@@ -9,7 +9,9 @@ final class PlannerStore {
     var unlocked = false
     var syncing = false
     var error: String?
-    var baseURL = UserDefaults.standard.string(forKey: "slate.base") ?? "http://127.0.0.1:3000"
+    static let productionURL = "https://slate.olivertran.me"
+    var baseURL = PlannerStore.preferredBase(UserDefaults.standard.string(forKey: "slate.base"))
+    var googleMessage: String?
     var lists: [ListRecord] = []
     var tasks: [TaskRecord] = [] {
         didSet { taskGeneration &+= 1 }
@@ -40,6 +42,11 @@ final class PlannerStore {
     private var googleCache: [GoogleCache] = []
 
     func boot() async {
+        let preferred = Self.preferredBase(UserDefaults.standard.string(forKey: "slate.base"))
+        if preferred != baseURL || preferred != UserDefaults.standard.string(forKey: "slate.base") {
+            baseURL = preferred
+            UserDefaults.standard.set(preferred, forKey: "slate.base")
+        }
         token = Keychain.load()
         if let cached = loadCache() { apply(cached, replace: true) }
         if token != nil {
@@ -67,6 +74,7 @@ final class PlannerStore {
             Keychain.save(token!)
             unlocked = true
             await pull()
+            await refreshGoogle()
             return nil
         } catch let error as APIError {
             return describe(error)
@@ -294,19 +302,53 @@ final class PlannerStore {
         }
     }
 
-    func googleStatus() async -> GoogleStatus? {
-        guard let client = client() else { return nil }
-        return try? await client.googleStatus()
+    func useServer(_ value: String) {
+        let next = Self.preferredBase(value)
+        baseURL = next
+        UserDefaults.standard.set(next, forKey: "slate.base")
+        googleCache.removeAll()
+        Task { await refreshGoogle() }
     }
 
     func refreshGoogle() async {
-        let next = await googleStatus()
-        let was = googleAccount?.connected == true
-        googleAccount = next
-        if (next?.connected == true) != was {
-            googleCache.removeAll()
-            googleGeneration += 1
+        guard let client = client() else {
+            googleMessage = "The server address is invalid."
+            return
         }
+        do {
+            let next = try await client.googleStatus()
+            let was = googleAccount?.connected == true
+            googleAccount = next
+            googleMessage = nil
+            if (next.connected) != was {
+                googleCache.removeAll()
+                googleGeneration += 1
+            }
+        } catch {
+            googleMessage = "Could not reach \(baseURL)."
+            if googleAccount?.connected != true { googleAccount = nil }
+        }
+    }
+
+    static func preferredBase(_ stored: String?) -> String {
+        var value = stored?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if value.isEmpty {
+            #if targetEnvironment(simulator)
+            return "http://127.0.0.1:3000"
+            #else
+            return productionURL
+            #endif
+        }
+        if !value.contains("://") { value = "https://\(value)" }
+        let host = URL(string: value)?.host?.lowercased() ?? ""
+        #if targetEnvironment(simulator)
+        return value
+        #else
+        if host == "localhost" || host == "127.0.0.1" || host.hasSuffix(".trycloudflare.com") {
+            return productionURL
+        }
+        return value
+        #endif
     }
 
     func googleEvents(start: String, end: String) async -> [GoogleEvent] {

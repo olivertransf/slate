@@ -379,6 +379,7 @@ struct SettingsScreen: View {
     @AppStorage("slate.theme") private var theme = "system"
     @State private var message = ""
     @State private var signingIn = false
+    @State private var serverDraft = ""
 
     private var status: GoogleStatus? { store.googleAccount }
 
@@ -390,6 +391,15 @@ struct SettingsScreen: View {
                     Text("Light").tag("light")
                     Text("Dark").tag("dark")
                 }
+            }
+            Section("Server") {
+                TextField("Server", text: $serverDraft)
+                    .textInputAutocapitalization(.never)
+                    .autocorrectionDisabled()
+                    .onSubmit {
+                        store.useServer(serverDraft)
+                        serverDraft = store.baseURL
+                    }
             }
             Section {
                 if status?.connected == true {
@@ -413,7 +423,10 @@ struct SettingsScreen: View {
             }
         }
         .navigationTitle("Settings")
-        .task { await store.refreshGoogle() }
+        .task {
+            serverDraft = store.baseURL
+            await store.refreshGoogle()
+        }
     }
 
     private var accountName: String {
@@ -421,9 +434,10 @@ struct SettingsScreen: View {
     }
 
     private var footer: String {
+        if let googleMessage = store.googleMessage, !googleMessage.isEmpty { return googleMessage }
         if status?.configured == false { return "The server is missing the Google client." }
         if !message.isEmpty { return message }
-        return "Signing in on this iPhone, iPad, or the website connects Calendar on every device that unlocks Slate."
+        return "This iPad uses \(store.baseURL). A Google sign-in on the website is used here too."
     }
 
     private func signIn() async {
