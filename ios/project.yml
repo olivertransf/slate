@@ -1,0 +1,42 @@
+name: Slate
+options:
+  bundleIdPrefix: com.olivertran
+  deploymentTarget:
+    iOS: "26.0"
+  createIntermediateGroups: true
+settings:
+  SWIFT_VERSION: "5.0"
+  MARKETING_VERSION: "1.0"
+  CURRENT_PROJECT_VERSION: "1"
+targets:
+  Slate:
+    type: application
+    platform: iOS
+    sources:
+      - path: Slate
+    settings:
+      PRODUCT_BUNDLE_IDENTIFIER: com.olivertran.slate
+      TARGETED_DEVICE_FAMILY: "1,2"
+      GENERATE_INFOPLIST_FILE: NO
+      INFOPLIST_FILE: Slate/Info.plist
+      CODE_SIGN_STYLE: Automatic
+      DEVELOPMENT_TEAM: ""
+    info:
+      path: Slate/Info.plist
+      properties:
+        CFBundleDisplayName: Slate
+        CFBundleShortVersionString: "1.0"
+        UILaunchScreen: {}
+        UIUserInterfaceStyle: Light
+        NSUserNotificationsUsageDescription: Slate reminds you when a task is due.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
+        UISupportedInterfaceOrientations~ipad:
+          - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationPortraitUpsideDown
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
