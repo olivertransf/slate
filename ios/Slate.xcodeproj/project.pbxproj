@@ -8,6 +8,7 @@
 
 /* Begin PBXBuildFile section */
 		10AD1754EC54F8CA3718869B /* Store.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A9AF5653A626C936A19AEA5 /* Store.swift */; };
+		1A09C1F83C301095D28301DB /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 70C0C77802F3641B0FA40B88 /* Assets.xcassets */; };
 		20D9DDE3390D27330AF300A8 /* Models.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9EE81B358BE70095EC8A119F /* Models.swift */; };
 		24C3C0A5C32B4595A2DF6052 /* SlateApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7AE9B846164B9AAB09617499 /* SlateApp.swift */; };
 		7F3A1274AFBBCA847026EA1E /* Views.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9682F5D4325C3D73C6668218 /* Views.swift */; };
@@ -16,12 +17,13 @@
 
 /* Begin PBXFileReference section */
 		6A9AF5653A626C936A19AEA5 /* Store.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Store.swift; sourceTree = "<group>"; };
+		70C0C77802F3641B0FA40B88 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		77A8D6551282E65C890AAF44 /* API.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = API.swift; sourceTree = "<group>"; };
 		7AE9B846164B9AAB09617499 /* SlateApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SlateApp.swift; sourceTree = "<group>"; };
 		9682F5D4325C3D73C6668218 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		9EE81B358BE70095EC8A119F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CCD5D85D2B12BF59A465BCB6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		D894A56720A4907256863B27 /* Slate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Slate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D894A56720A4907256863B27 /* Slate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Slate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -37,6 +39,7 @@
 			isa = PBXGroup;
 			children = (
 				77A8D6551282E65C890AAF44 /* API.swift */,
+				70C0C77802F3641B0FA40B88 /* Assets.xcassets */,
 				CCD5D85D2B12BF59A465BCB6 /* Info.plist */,
 				9EE81B358BE70095EC8A119F /* Models.swift */,
 				7AE9B846164B9AAB09617499 /* SlateApp.swift */,
@@ -62,6 +65,7 @@
 			buildConfigurationList = 3F4BF0FF807B4AD8AC7C2540 /* Build configuration list for PBXNativeTarget "Slate" */;
 			buildPhases = (
 				8C27DBD5BB2C3ECA4CAC6286 /* Sources */,
+				CE9E798F55D9A2B9163975E3 /* Resources */,
 			);
 			buildRules = (
 			);
@@ -84,6 +88,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					2722D81FC59EDC8E0ABD5EFD = {
+						DevelopmentTeam = "";
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -107,6 +112,17 @@
 		};
 /* End PBXProject section */
 
+/* Begin PBXResourcesBuildPhase section */
+		CE9E798F55D9A2B9163975E3 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				1A09C1F83C301095D28301DB /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
 /* Begin PBXSourcesBuildPhase section */
 		8C27DBD5BB2C3ECA4CAC6286 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -129,7 +145,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 737XLL52JV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Slate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -206,7 +222,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = 737XLL52JV;
+				DEVELOPMENT_TEAM = "";
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Slate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (

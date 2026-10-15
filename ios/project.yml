@@ -19,6 +19,7 @@ targets:
       TARGETED_DEVICE_FAMILY: "1,2"
       GENERATE_INFOPLIST_FILE: NO
       INFOPLIST_FILE: Slate/Info.plist
+      ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
       CODE_SIGN_STYLE: Automatic
       DEVELOPMENT_TEAM: ""
     info:
@@ -32,6 +33,10 @@ targets:
           - fetch
         BGTaskSchedulerPermittedIdentifiers:
           - com.olivertran.slate.refresh
+        CFBundleURLTypes:
+          - CFBundleURLName: com.olivertran.slate
+            CFBundleURLSchemes:
+              - slate
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         UISupportedInterfaceOrientations:
