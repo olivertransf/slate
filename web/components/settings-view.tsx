@@ -68,7 +68,7 @@ export function SettingsView({ notice }: { notice: string | null }) {
                   <label key={calendar.id} className="check-row">
                     <input type="checkbox" checked={on} onChange={() => toggleCalendar(calendar.id, !on)} />
                     <i className="count-dot" style={{ background: calendar.color }} />
-                    {calendar.name}
+                    <span>{calendar.name}</span>
                   </label>
                 );
               })}

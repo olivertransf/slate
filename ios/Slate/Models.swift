@@ -156,9 +156,36 @@ enum Day {
         iso(Calendar.current.date(byAdding: .day, value: days, to: parse(value)) ?? .now)
     }
 
-    static func label(_ value: String, today: String = iso()) -> String {
+    private static var todayStamp = Date.distantPast
+    private static var todayValue = ""
+    private static var tomorrowValue = ""
+    private static var weekEndValue = ""
+    private static var labelCache: [String: String] = [:]
+
+    static func today(now: Date = .now) -> (today: String, tomorrow: String, weekEnd: String) {
+        if !todayValue.isEmpty, Calendar.current.isDate(now, inSameDayAs: todayStamp) {
+            return (todayValue, tomorrowValue, weekEndValue)
+        }
+        let today = iso(now)
+        todayValue = today
+        tomorrowValue = add(today, days: 1)
+        weekEndValue = add(today, days: 6)
+        todayStamp = now
+        labelCache.removeAll(keepingCapacity: true)
+        return (today, tomorrowValue, weekEndValue)
+    }
+
+    static func label(_ value: String, today: String? = nil) -> String {
+        let today = today ?? self.today().today
+        if let cached = labelCache[today + value] { return cached }
+        let text = uncachedLabel(value, today: today)
+        labelCache[today + value] = text
+        return text
+    }
+
+    private static func uncachedLabel(_ value: String, today: String) -> String {
         if value == today { return "Today" }
-        if value == add(today, days: 1) { return "Tomorrow" }
+        if value == tomorrowValue || value == add(today, days: 1) { return "Tomorrow" }
         if value == add(today, days: -1) { return "Yesterday" }
         let date = parse(value)
         if Calendar.current.isDate(date, equalTo: parse(today), toGranularity: .weekOfYear) {
@@ -182,13 +209,77 @@ func taskOpen(_ task: TaskRecord) -> Bool {
     task.deletedAt == nil && task.completedAt == nil
 }
 
-func matches(task: TaskRecord, view: String, today: String = Day.iso()) -> Bool {
+struct TaskIndex {
+    var inbox: [TaskRecord] = []
+    var today: [TaskRecord] = []
+    var tomorrow: [TaskRecord] = []
+    var week: [TaskRecord] = []
+    var completed: [TaskRecord] = []
+    var byList: [String: [TaskRecord]] = [:]
+    var byTag: [String: [TaskRecord]] = [:]
+
+    func tasks(for view: String) -> [TaskRecord] {
+        switch view {
+        case "inbox": return inbox
+        case "today": return today
+        case "tomorrow": return tomorrow
+        case "week": return week
+        case "completed": return completed
+        default:
+            if view.hasPrefix("list:") { return byList[String(view.dropFirst(5)), default: []] }
+            if view.hasPrefix("tag:") { return byTag[String(view.dropFirst(4)), default: []] }
+            return []
+        }
+    }
+
+    static func make(_ tasks: [TaskRecord]) -> TaskIndex {
+        let bounds = Day.today()
+        var index = TaskIndex()
+        for task in tasks {
+            if task.deletedAt != nil { continue }
+            if task.completedAt != nil {
+                index.completed.append(task)
+                continue
+            }
+            if task.listId == nil { index.inbox.append(task) }
+            if let due = task.dueOn {
+                if due <= bounds.today { index.today.append(task) }
+                if due == bounds.tomorrow { index.tomorrow.append(task) }
+                if due <= bounds.weekEnd { index.week.append(task) }
+            }
+            if let listId = task.listId { index.byList[listId, default: []].append(task) }
+            for tag in task.tagIds { index.byTag[tag, default: []].append(task) }
+        }
+        let bySort: (TaskRecord, TaskRecord) -> Bool = { $0.sort < $1.sort }
+        index.inbox.sort(by: bySort)
+        index.today.sort(by: bySort)
+        index.tomorrow.sort(by: bySort)
+        index.week.sort(by: bySort)
+        index.completed.sort { ($0.completedAt ?? "") > ($1.completedAt ?? "") }
+        for key in index.byList.keys {
+            var items = index.byList[key] ?? []
+            items.sort(by: bySort)
+            index.byList[key] = items
+        }
+        for key in index.byTag.keys {
+            var items = index.byTag[key] ?? []
+            items.sort(by: bySort)
+            index.byTag[key] = items
+        }
+        return index
+    }
+}
+
+func matches(task: TaskRecord, view: String, today: String = Day.today().today) -> Bool {
     guard taskOpen(task) else { return false }
+    let bounds = Day.today()
+    let tomorrow = today == bounds.today ? bounds.tomorrow : Day.add(today, days: 1)
+    let weekEnd = today == bounds.today ? bounds.weekEnd : Day.add(today, days: 6)
     switch view {
     case "inbox": return task.listId == nil
     case "today": return task.dueOn != nil && task.dueOn! <= today
-    case "tomorrow": return task.dueOn == Day.add(today, days: 1)
-    case "week": return task.dueOn != nil && task.dueOn! <= Day.add(today, days: 6)
+    case "tomorrow": return task.dueOn == tomorrow
+    case "week": return task.dueOn != nil && task.dueOn! <= weekEnd
     default:
         if view.hasPrefix("list:") { return task.listId == String(view.dropFirst(5)) }
         if view.hasPrefix("tag:") { return task.tagIds.contains(String(view.dropFirst(4))) }
@@ -215,7 +306,10 @@ struct QuickAdd {
 
 private let quickDatePattern = #"\b(?:next\s+(?:week|sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)|in\s+\d+\s+days?|tomorrow|tmrw|tmr|tmw|tom|today|tonight|tod|yesterday|yest|yday|sunday|monday|tuesday|wednesday|thursday|friday|saturday|sun|mon|tue|tues|wed|thu|thur|thurs|fri|sat)\b"#
 
-func parseQuickAdd(_ input: String, today: String = Day.iso()) -> QuickAdd {
+func parseQuickAdd(_ input: String, today: String = Day.today().today) -> QuickAdd {
+    if input.isEmpty {
+        return QuickAdd(title: "", dueOn: nil, dueTime: nil, priority: 0, tagNames: [], repeatRule: nil, tokens: [])
+    }
     var dueOn: String?
     var dueTime: String?
     var priority = 0

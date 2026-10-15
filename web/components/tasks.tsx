@@ -259,7 +259,7 @@ export function TaskColumn({
           onChange={setDraft}
           onSubmit={addTask}
           today={todayText}
-          placeholder={`Add task to "${list?.name ?? title}". Press Enter to save.`}
+          placeholder="Add a task"
         />
       </div>
       {list && addingSection && (

@@ -276,7 +276,7 @@ function WeekBoard({
   const hold = useRef(false);
   const prevRow = useRef(0);
   const seenWeek = useRef("");
-  const rowHeight = Math.max(72, height / Math.max(1, weekCount));
+  const rowHeight = height > 0 ? height / Math.max(1, weekCount) : 120;
   const month = parseDay(monthDay).getMonth();
   const weeks = useMemo(() => Array.from({ length: weekTotal }, (_, index) => addDays(origin, index * 7)), [origin, weekTotal]);
 
@@ -324,13 +324,67 @@ function WeekBoard({
   useEffect(() => {
     const el = scroller.current;
     if (!el) return;
+    let pinch = 0;
+    let gestureScale = 1;
+    function distance(touches: TouchList) {
+      const [a, b] = [touches[0], touches[1]];
+      if (!a || !b) return 0;
+      return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+    }
     function wheel(event: WheelEvent) {
       if (!event.ctrlKey && !event.metaKey) return;
       event.preventDefault();
       onZoom(event.deltaY > 0 ? 1 : -1);
     }
+    function touchStart(event: TouchEvent) {
+      if (event.touches.length === 2) pinch = distance(event.touches);
+    }
+    function touchMove(event: TouchEvent) {
+      if (event.touches.length !== 2 || pinch === 0) return;
+      event.preventDefault();
+      const next = distance(event.touches);
+      const ratio = next / pinch;
+      if (ratio > 1.12) {
+        onZoom(-1);
+        pinch = next;
+      } else if (ratio < 0.89) {
+        onZoom(1);
+        pinch = next;
+      }
+    }
+    function touchEnd() {
+      pinch = 0;
+    }
+    function gestureStart(event: Event) {
+      gestureScale = 1;
+      event.preventDefault();
+    }
+    function gestureChange(event: Event) {
+      event.preventDefault();
+      const scale = (event as Event & { scale?: number }).scale ?? 1;
+      const ratio = scale / gestureScale;
+      if (ratio > 1.12) {
+        onZoom(-1);
+        gestureScale = scale;
+      } else if (ratio < 0.89) {
+        onZoom(1);
+        gestureScale = scale;
+      }
+    }
     el.addEventListener("wheel", wheel, { passive: false });
-    return () => el.removeEventListener("wheel", wheel);
+    el.addEventListener("touchstart", touchStart, { passive: true });
+    el.addEventListener("touchmove", touchMove, { passive: false });
+    el.addEventListener("touchend", touchEnd);
+    el.addEventListener("gesturestart", gestureStart);
+    el.addEventListener("gesturechange", gestureChange);
+    return () => {
+      el.removeEventListener("wheel", wheel);
+      el.removeEventListener("touchstart", touchStart);
+      el.removeEventListener("touchmove", touchMove);
+      el.removeEventListener("touchend", touchEnd);
+      el.removeEventListener("gesturestart", gestureStart);
+      el.removeEventListener("gesturechange", gestureChange);
+    };
   }, [onZoom]);
 
   function onScroll() {
@@ -363,10 +417,11 @@ function WeekBoard({
     if (task) onMove(task, day, null);
   }
 
-  const slots = Math.max(2, Math.floor((rowHeight - 30) / 20));
+  const slots = Math.max(0, Math.floor((rowHeight - 26) / 20));
 
   return (
     <div className="cal-board">
+      <div className="cal-pan">
       <div className="cal-dows">
         <div className="dow gutter" />
         {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((label) => <div key={label} className="dow">{label}</div>)}
@@ -397,6 +452,7 @@ function WeekBoard({
             })}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );
@@ -521,7 +577,7 @@ function TimeGrid({
             <strong>{Number(day.slice(8))}</strong>
           </div>
         ))}
-        <div>
+        <div className="hour-col">
           {hours.map((hour) => <div key={hour} className="hour" style={{ height: hourHeight }}>{formatTime(`${String(hour).padStart(2, "0")}:00`)}</div>)}
         </div>
         {columns.map((day) => {

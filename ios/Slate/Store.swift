@@ -11,7 +11,21 @@ final class PlannerStore {
     var error: String?
     var baseURL = UserDefaults.standard.string(forKey: "slate.base") ?? "http://127.0.0.1:3000"
     var lists: [ListRecord] = []
-    var tasks: [TaskRecord] = []
+    var tasks: [TaskRecord] = [] {
+        didSet { taskGeneration &+= 1 }
+    }
+    @ObservationIgnored private var indexCache: TaskIndex?
+    @ObservationIgnored private var indexGeneration = -1
+    private(set) var taskGeneration = 0
+
+    var taskIndex: TaskIndex {
+        let generation = taskGeneration
+        if let indexCache, indexGeneration == generation { return indexCache }
+        let built = TaskIndex.make(tasks)
+        indexCache = built
+        indexGeneration = generation
+        return built
+    }
     var tags: [TagRecord] = []
     var habits: [HabitRecord] = []
     var habitChecks: [HabitCheckRecord] = []

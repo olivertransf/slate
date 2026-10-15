@@ -121,8 +121,8 @@ function Shell() {
       )}
       {(error || syncing) && <div className="toast">{syncing ? "Syncing" : error}</div>}
       <nav className="tabs">
-        {[["today", "Tasks"], ["calendar", "Calendar"], ["habits", "Habits"], ["countdowns", "Countdown"]].map(([id, label]) => (
-          <button key={id} className={view === id || (id === "today" && !wide) ? "on" : ""} onClick={() => chooseView(id === "today" ? "today" : id)}>
+        {[["today", "Tasks"], ["calendar", "Calendar"], ["habits", "Habits"], ["countdowns", "Countdown"], ["settings", "Settings"]].map(([id, label]) => (
+          <button key={id} type="button" className={(id === "today" ? !wide : view === id) ? "on" : ""} onClick={() => chooseView(id === "today" ? "today" : id)}>
             {label}
           </button>
         ))}
