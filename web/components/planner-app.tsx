@@ -5,10 +5,10 @@ import { patchUi, useUiSettings } from "@/lib/ui-settings";
 import { CalendarView } from "./calendar";
 import { CountdownView } from "./countdowns";
 import { HabitView } from "./habits";
-import { PlannerProvider, usePlanner } from "./planner-context";
+import { PlannerProvider, today, usePlanner } from "./planner-context";
 import { SettingsView } from "./settings-view";
 import { Sidebar } from "./sidebar";
-import { TaskColumn, TaskDetail } from "./tasks";
+import { TaskAddSheet, TaskColumn, TaskDetail } from "./tasks";
 import { Unlock } from "./unlock";
 
 export function PlannerApp() {
@@ -150,6 +150,9 @@ function Shell() {
         />
       )}
       {view === "calendar" && <CalendarView onSelect={chooseTask} />}
+      {view === "calendar" && addOpen && (
+        <TaskAddSheet defaultDay={today()} onClose={() => setAddOpen(false)} onAdded={(task) => chooseTask(task.id)} />
+      )}
       {view === "habits" && <HabitView addOpen={addOpen} onAddClose={() => setAddOpen(false)} />}
       {view === "countdowns" && <CountdownView addOpen={addOpen} onAddClose={() => setAddOpen(false)} />}
       {view === "settings" && <SettingsView notice={notice} />}
@@ -167,7 +170,9 @@ function Shell() {
           {canUndo && <button type="button" onClick={undo}>Undo</button>}
         </div>
       )}
-      <button type="button" className="fab" aria-label="Add" onClick={() => setAddOpen(true)}>+</button>
+      {view !== "settings" && view !== "completed" && view !== "trash" && (
+        <button type="button" className="fab" aria-label="Add" onClick={() => setAddOpen(true)}>+</button>
+      )}
       {palette && (
         <form className="palette" role="dialog" aria-modal="true" aria-label="Commands" onSubmit={(event) => {
           event.preventDefault();

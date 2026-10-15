@@ -1599,7 +1599,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
     background: var(--chip);
     border-radius: 22px;
   }
-  .fab { display: grid; bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .shell .fab { right: 22px; bottom: calc(96px + env(safe-area-inset-bottom)); }
+  .shell[data-pane="detail"] .fab, .shell[data-pane="nav"] .fab { display: none; }
 }
 
 .task-card {
@@ -1639,9 +1640,8 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .palette input { width: 100%; }
 .palette button { width: 100%; text-align: left; border: 0; background: transparent; padding: 8px; border-radius: 8px; }
 .palette button:hover, .palette button.on { background: var(--hover); }
-.shell.wide .fab { display: grid; }
 .fab {
-  display: none;
+  display: grid;
   position: fixed;
   right: 22px;
   bottom: 28px;
@@ -1657,6 +1657,11 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
   place-items: center;
   box-shadow: 0 10px 24px rgba(76, 141, 255, 0.35);
 }
+@media (min-width: 981px) {
+  .shell.drawer .fab { right: calc(var(--detail-w) + 22px); }
+}
+.sheet-hint.set { color: var(--blue); font-weight: 600; }
+.sheet-tools .primary:disabled { opacity: 0.45; }
 .swipe-row { position: relative; overflow: hidden; }
 .swipe-actions {
   position: absolute;

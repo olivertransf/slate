@@ -25,7 +25,6 @@ export function TaskColumn({
   onAddClose?: () => void;
 }) {
   const { data, save, completeTask } = usePlanner();
-  const [draft, setDraft] = useState("");
   const [sectionName, setSectionName] = useState("");
   const [addingSection, setAddingSection] = useState(false);
   const [activeSection, setActiveSection] = useState<string | null>(null);
@@ -39,7 +38,6 @@ export function TaskColumn({
   const [layout, setLayout] = useState<"list" | "board">("list");
   const [group, setGroup] = useState<BoardGroup>("date");
   const [showCompleted, setShowCompleted] = useState(false);
-  const [notes, setNotes] = useState("");
   const [sortMode, setSortMode] = useState<SortMode>("manual");
   const [picked, setPicked] = useState<string[]>([]);
   const todayText = today();
@@ -95,35 +93,6 @@ export function TaskColumn({
     setEditingTitle(false);
     if (!name || name === list.name) return;
     save("lists", { ...list, name });
-  }
-
-  function addTask(event: React.FormEvent) {
-    event.preventDefault();
-    const parsed = parseQuickAdd(draft, todayText);
-    if (!parsed.title) return;
-    const tagIds = parsed.tagNames.map((name) => {
-      const existing = alive(data.tags).find((tag) => tag.name.toLowerCase() === name.toLowerCase());
-      if (existing) return existing.id;
-      const tag = { id: newId(), name, color: "#8E4EC6", updatedAt: new Date().toISOString(), deletedAt: null };
-      save("tags", tag);
-      return tag.id;
-    });
-    const task = stampTask({
-      title: parsed.title,
-      listId: list?.id ?? null,
-      sectionId: list && activeSection ? activeSection : null,
-      notes,
-      dueOn: parsed.dueOn,
-      dueTime: parsed.dueTime,
-      priority: parsed.priority,
-      repeat: parsed.repeat,
-      tagIds,
-    });
-    save("tasks", task);
-    setDraft("");
-    setNotes("");
-    onAddClose?.();
-    onSelect(task.id);
   }
 
   function addSection(event: React.FormEvent) {
@@ -185,9 +154,6 @@ export function TaskColumn({
       })),
     ];
   }, [list, open, sections]);
-
-  const parsedDraft = draft ? parseQuickAdd(draft, todayText) : null;
-  const draftHint = [parsedDraft?.dueOn ? formatDay(parsedDraft.dueOn, todayText) : "", parsedDraft?.dueTime ? formatTime(parsedDraft.dueTime) : ""].filter(Boolean).join(" · ");
 
   return (
     <section className="column">
@@ -276,17 +242,13 @@ export function TaskColumn({
         </div>
       </header>
       {addOpen && view !== "completed" && view !== "trash" && (
-        <form className="add-sheet" onSubmit={addTask}>
-          <button type="button" className="sheet-backdrop" aria-label="Close" onClick={onAddClose} />
-          <div className="sheet-card" role="dialog" aria-modal="true" aria-label="New task">
-            <input aria-label="Task" placeholder="What would you like to do?" value={draft} autoFocus onChange={(event) => setDraft(event.target.value)} />
-            <textarea aria-label="Description" placeholder="Description" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
-            <div className="sheet-tools">
-              <span>{draftHint || "Tomorrow, 3pm, and #tags stay in the title"}</span>
-              <button className="primary" type="submit">Add</button>
-            </div>
-          </div>
-        </form>
+        <TaskAddSheet
+          listId={list?.id ?? null}
+          sectionId={list && activeSection ? activeSection : null}
+          defaultDay={viewDay(view, todayText)}
+          onClose={() => onAddClose?.()}
+          onAdded={(task) => onSelect(task.id)}
+        />
       )}
       {list && addingSection && (
         <form className="section-compose" onSubmit={addSection}>
@@ -396,6 +358,76 @@ export function TaskColumn({
       </div>
       )}
     </section>
+  );
+}
+
+function viewDay(view: string, day: string): string | null {
+  if (view === "today" || view === "week") return day;
+  if (view === "tomorrow") return addDays(day, 1);
+  return null;
+}
+
+export function TaskAddSheet({
+  listId = null,
+  sectionId = null,
+  defaultDay = null,
+  onClose,
+  onAdded,
+}: {
+  listId?: string | null;
+  sectionId?: string | null;
+  defaultDay?: string | null;
+  onClose: () => void;
+  onAdded?: (task: TaskRecord) => void;
+}) {
+  const { data, save } = usePlanner();
+  const [draft, setDraft] = useState("");
+  const [notes, setNotes] = useState("");
+  const todayText = today();
+  const parsed = draft ? parseQuickAdd(draft, todayText) : null;
+  const dueOn = parsed?.dueOn ?? defaultDay;
+  const hint = [dueOn ? formatDay(dueOn, todayText) : "", parsed?.dueTime ? formatTime(parsed.dueTime) : ""].filter(Boolean).join(" · ");
+
+  function submit(event: React.FormEvent) {
+    event.preventDefault();
+    if (!parsed?.title) return;
+    const tagIds = parsed.tagNames.map((name) => {
+      const existing = alive(data.tags).find((tag) => tag.name.toLowerCase() === name.toLowerCase());
+      if (existing) return existing.id;
+      const tag = { id: newId(), name, color: "#8E4EC6", updatedAt: new Date().toISOString(), deletedAt: null };
+      save("tags", tag);
+      return tag.id;
+    });
+    const task = stampTask({
+      title: parsed.title,
+      listId,
+      sectionId,
+      notes,
+      dueOn,
+      dueTime: parsed.dueTime,
+      priority: parsed.priority,
+      repeat: parsed.repeat,
+      tagIds,
+    });
+    save("tasks", task);
+    setDraft("");
+    setNotes("");
+    onClose();
+    onAdded?.(task);
+  }
+
+  return (
+    <form className="add-sheet" onSubmit={submit} onKeyDown={(event) => { if (event.key === "Escape") onClose(); }}>
+      <button type="button" className="sheet-backdrop" aria-label="Close" onClick={onClose} />
+      <div className="sheet-card" role="dialog" aria-modal="true" aria-label="New task">
+        <input aria-label="Task" placeholder="What would you like to do?" value={draft} autoFocus onChange={(event) => setDraft(event.target.value)} />
+        <textarea aria-label="Description" placeholder="Description" rows={2} value={notes} onChange={(event) => setNotes(event.target.value)} />
+        <div className="sheet-tools">
+          <span className={dueOn ? "sheet-hint set" : "sheet-hint"}>{hint || "Tomorrow, 3pm, and #tags stay in the title"}</span>
+          <button className="primary" type="submit" disabled={!parsed?.title}>Add</button>
+        </div>
+      </div>
+    </form>
   );
 }
 
