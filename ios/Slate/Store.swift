@@ -30,6 +30,8 @@ final class PlannerStore {
     var habits: [HabitRecord] = []
     var habitChecks: [HabitCheckRecord] = []
     var countdowns: [CountdownRecord] = []
+    var googleAccount: GoogleStatus?
+    private(set) var googleGeneration = 0
 
     private var revision = 0
     private var token: String?
@@ -43,6 +45,7 @@ final class PlannerStore {
         if token != nil {
             unlocked = true
             await pull()
+            await refreshGoogle()
         }
         ready = true
         while !Task.isCancelled {
@@ -53,6 +56,7 @@ final class PlannerStore {
 
     func refresh() async {
         await pull()
+        await refreshGoogle()
     }
 
     func unlock(passphrase: String) async -> String? {
@@ -295,11 +299,22 @@ final class PlannerStore {
         return try? await client.googleStatus()
     }
 
+    func refreshGoogle() async {
+        let next = await googleStatus()
+        let was = googleAccount?.connected == true
+        googleAccount = next
+        if (next?.connected == true) != was {
+            googleCache.removeAll()
+            googleGeneration += 1
+        }
+    }
+
     func googleEvents(start: String, end: String) async -> [GoogleEvent] {
         if let hit = freshGoogle(start: start, end: end) { return hit }
         guard let client = client() else { return storedGoogle(start: start, end: end) }
         do {
             let events = try await client.googleEvents(start: start, end: end)
+            if events.isEmpty, googleAccount?.connected != true { return events }
             googleCache.append(GoogleCache(start: start, end: end, at: .now, events: events))
             if googleCache.count > 8 { googleCache.removeFirst(googleCache.count - 8) }
             return events
@@ -316,6 +331,9 @@ final class PlannerStore {
     func googleLogout() async {
         guard let client = client() else { return }
         try? await client.googleLogout()
+        googleAccount = GoogleStatus(configured: googleAccount?.configured ?? true, connected: false, calendars: [])
+        googleCache.removeAll()
+        googleGeneration += 1
     }
 
     private func stamp() -> String { ISO8601DateFormatter().string(from: .now) }
