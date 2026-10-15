@@ -8,3 +8,4 @@ ios/DerivedData
 ios/.build
 .DS_Store
 *.xcuserstate
+.vercel
