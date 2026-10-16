@@ -293,16 +293,18 @@ export function matchesView(task: TaskRecord, view: string, today = dayISO(new D
   return false;
 }
 
-export function countdownAmount(record: CountdownRecord, today = dayISO(new Date())): number {
-  let target = record.day;
-  if (record.repeatYearly) {
-    const currentYear = today.slice(0, 4);
-    const annual = `${currentYear}-${record.day.slice(5)}`;
-    target = annual >= today || record.mode === "countup" ? annual : `${Number(currentYear) + 1}-${record.day.slice(5)}`;
-    if (record.mode === "countup" && annual > today) {
-      target = `${Number(currentYear) - 1}-${record.day.slice(5)}`;
-    }
+export function countdownDay(record: CountdownRecord, today = dayISO(new Date())): string {
+  if (!record.repeatYearly) return record.day;
+  const currentYear = today.slice(0, 4);
+  const annual = `${currentYear}-${record.day.slice(5)}`;
+  if (record.mode === "countup") {
+    return annual > today ? `${Number(currentYear) - 1}-${record.day.slice(5)}` : annual;
   }
+  return annual >= today ? annual : `${Number(currentYear) + 1}-${record.day.slice(5)}`;
+}
+
+export function countdownAmount(record: CountdownRecord, today = dayISO(new Date())): number {
+  const target = countdownDay(record, today);
   const span = record.mode === "countup" ? daysBetween(target, today) : daysBetween(today, target);
   if (record.unit === "week") return Math.floor(span / 7);
   if (record.unit === "month") return Math.floor(span / 30);

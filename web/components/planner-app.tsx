@@ -39,6 +39,8 @@ function Shell() {
   const [notice, setNotice] = useState<string | null>(null);
   const [palette, setPalette] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [calDay, setCalDay] = useState(today());
   const [command, setCommand] = useState("");
   const wide = stageView(view);
 
@@ -132,6 +134,7 @@ function Shell() {
   }
 
   return (
+    <>
     <div
       className={className}
       data-pane={pane}
@@ -144,14 +147,14 @@ function Shell() {
           view={view}
           selectedId={selectedId}
           onSelect={chooseTask}
-          onLists={() => setPane("nav")}
+          onLists={() => setMenuOpen(true)}
           addOpen={addOpen}
           onAddClose={() => setAddOpen(false)}
         />
       )}
-      {view === "calendar" && <CalendarView onSelect={chooseTask} />}
+      {view === "calendar" && <CalendarView onSelect={chooseTask} onMenu={() => setMenuOpen(true)} onDay={setCalDay} />}
       {view === "calendar" && addOpen && (
-        <TaskAddSheet defaultDay={today()} onClose={() => setAddOpen(false)} onAdded={(task) => chooseTask(task.id)} />
+        <TaskAddSheet defaultDay={calDay} onClose={() => setAddOpen(false)} onAdded={(task) => chooseTask(task.id)} />
       )}
       {view === "habits" && <HabitView addOpen={addOpen} onAddClose={() => setAddOpen(false)} />}
       {view === "countdowns" && <CountdownView addOpen={addOpen} onAddClose={() => setAddOpen(false)} />}
@@ -202,6 +205,22 @@ function Shell() {
       </nav>
       <ReminderLoop />
     </div>
+    {menuOpen && (
+      <div className="menu-drawer">
+        <button type="button" className="menu-dim" aria-label="Close menu" onClick={() => setMenuOpen(false)} />
+        <div
+          className="menu-panel"
+          onTouchStart={(event) => { event.currentTarget.dataset.x = String(event.touches[0]?.clientX ?? 0); }}
+          onTouchEnd={(event) => {
+            const start = Number(event.currentTarget.dataset.x ?? 0);
+            if (start - (event.changedTouches[0]?.clientX ?? start) > 60) setMenuOpen(false);
+          }}
+        >
+          <Sidebar view={view} onView={(next) => { chooseView(next); setMenuOpen(false); }} />
+        </div>
+      </div>
+    )}
+    </>
   );
 }
 

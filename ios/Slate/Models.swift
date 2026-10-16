@@ -131,6 +131,26 @@ struct GoogleStatus: Codable {
     var calendars: [GoogleCalendarInfo]
 }
 
+enum GoogleCalendarChoice {
+    static func ids(from raw: String) -> Set<String> {
+        guard let data = raw.data(using: .utf8),
+              let list = try? JSONDecoder().decode([String].self, from: data) else { return [] }
+        return Set(list)
+    }
+
+    static func raw(from ids: Set<String>) -> String {
+        let data = (try? JSONEncoder().encode(ids.sorted())) ?? Data("[]".utf8)
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func visible(_ events: [GoogleEvent], show: Bool, hiddenRaw: String) -> [GoogleEvent] {
+        guard show else { return [] }
+        let hidden = ids(from: hiddenRaw)
+        guard !hidden.isEmpty else { return events }
+        return events.filter { !hidden.contains($0.calendarId) }
+    }
+}
+
 struct GoogleEvent: Codable, Identifiable, Hashable {
     var id: String
     var title: String
@@ -166,18 +186,19 @@ enum Day {
         Calendar.current.dateComponents([.day], from: parse(from), to: parse(to)).day ?? 0
     }
 
-    static func countdownAmount(_ record: CountdownRecord, today: String = iso()) -> Int {
-        var target = record.day
-        if record.repeatYearly, record.day.count >= 10 {
-            let year = Int(today.prefix(4)) ?? 1970
-            let monthDay = record.day.dropFirst(5)
-            let annual = "\(year)-\(monthDay)"
-            if record.mode == "countup" {
-                target = annual > today ? "\(year - 1)-\(monthDay)" : annual
-            } else {
-                target = annual >= today ? annual : "\(year + 1)-\(monthDay)"
-            }
+    static func countdownDay(_ record: CountdownRecord, today: String = iso()) -> String {
+        guard record.repeatYearly, record.day.count >= 10 else { return record.day }
+        let year = Int(today.prefix(4)) ?? 1970
+        let monthDay = record.day.dropFirst(5)
+        let annual = "\(year)-\(monthDay)"
+        if record.mode == "countup" {
+            return annual > today ? "\(year - 1)-\(monthDay)" : annual
         }
+        return annual >= today ? annual : "\(year + 1)-\(monthDay)"
+    }
+
+    static func countdownAmount(_ record: CountdownRecord, today: String = iso()) -> Int {
+        let target = countdownDay(record, today: today)
         let span = record.mode == "countup" ? between(target, today) : between(today, target)
         switch record.unit {
         case "week": return span / 7

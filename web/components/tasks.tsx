@@ -159,6 +159,11 @@ export function TaskColumn({
     <section className="column">
       <header>
         <div className="title-row">
+          {onLists && (
+            <button type="button" className="lists-toggle" aria-label="Lists" onClick={onLists}>
+              <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>
+            </button>
+          )}
           {list ? (
             <i className="title-swatch" style={{ background: list.color }} />
           ) : (
@@ -238,7 +243,6 @@ export function TaskColumn({
               <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3.5h3.2v9H3zM6.6 3.5h3.2v6H6.6zM10.2 3.5H13.4v7.5H10.2z" fill="none" stroke="currentColor" strokeWidth="1.3" /></svg>
             </button>
           </div>
-          {onLists && <button className="text-button lists-toggle" onClick={onLists}>Lists</button>}
         </div>
       </header>
       {addOpen && view !== "completed" && view !== "trash" && (

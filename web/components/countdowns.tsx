@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { alive, countdownAmount, parseDay, type CountdownRecord } from "@/lib/model";
+import { alive, countdownAmount, countdownDay, parseDay, type CountdownRecord } from "@/lib/model";
 import { newId, today, usePlanner } from "./planner-context";
 
 const UNITS = ["day", "week", "month", "year"] as const;
@@ -11,7 +11,8 @@ export function CountdownView({ addOpen = false, onAddClose }: { addOpen?: boole
   const { data, save } = usePlanner();
   const [selected, setSelected] = useState<string | null>(null);
   const [title, setTitle] = useState("");
-  const items = alive(data.countdowns).sort((a, b) => a.sort - b.sort);
+  const day = today();
+  const items = alive(data.countdowns).sort((a, b) => countdownDay(a, day).localeCompare(countdownDay(b, day)) || a.title.localeCompare(b.title));
   const current = items.find((item) => item.id === selected) ?? null;
 
   function add(event: FormEvent<HTMLFormElement>) {
@@ -61,7 +62,7 @@ export function CountdownView({ addOpen = false, onAddClose }: { addOpen?: boole
         <div className={current ? "split" : ""}>
           <div className="count-list">
             {items.map((item) => {
-              const amount = countdownAmount(item, today());
+              const amount = countdownAmount(item, day);
               return (
                 <button key={item.id} type="button" className={item.id === selected ? "count-row selected" : "count-row"} onClick={() => setSelected(item.id === selected ? null : item.id)}>
                   {item.imageKey ? <img className="count-icon" alt="" src={`/api/files?key=${encodeURIComponent(item.imageKey)}`} /> : <i className="count-icon" style={{ background: item.color }}>{item.title.slice(0, 1)}</i>}

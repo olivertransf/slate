@@ -798,6 +798,8 @@ struct TaskSidebar: View {
 struct SettingsScreen: View {
     @Environment(PlannerStore.self) private var store
     @AppStorage("slate.theme") private var theme = "system"
+    @AppStorage("slate.showGoogle") private var showGoogle = true
+    @AppStorage("slate.hiddenCalendars") private var hiddenCalendars = ""
     @State private var message = ""
     @State private var signingIn = false
     @State private var serverDraft = ""
@@ -825,6 +827,17 @@ struct SettingsScreen: View {
             Section {
                 if status?.connected == true {
                     LabeledContent("Account", value: accountName)
+                    Toggle("Show events on the calendar", isOn: $showGoogle)
+                    ForEach(status?.calendars ?? []) { calendar in
+                        Toggle(isOn: calendarShown(calendar.id)) {
+                            HStack(spacing: 10) {
+                                Circle()
+                                    .fill(Color(hex: calendar.color))
+                                    .frame(width: 12, height: 12)
+                                Text(calendar.name)
+                            }
+                        }
+                    }
                     Button("Sign out", role: .destructive) {
                         Task { await store.googleLogout() }
                     }
@@ -852,6 +865,17 @@ struct SettingsScreen: View {
 
     private var accountName: String {
         status?.calendars.first { $0.primary }?.name ?? "Connected"
+    }
+
+    private func calendarShown(_ id: String) -> Binding<Bool> {
+        Binding(
+            get: { !GoogleCalendarChoice.ids(from: hiddenCalendars).contains(id) },
+            set: { on in
+                var ids = GoogleCalendarChoice.ids(from: hiddenCalendars)
+                if on { ids.remove(id) } else { ids.insert(id) }
+                hiddenCalendars = GoogleCalendarChoice.raw(from: ids)
+            }
+        )
     }
 
     private var footer: String {
@@ -1330,6 +1354,8 @@ struct CalendarScreen: View {
     var onSelect: (TaskRecord) -> Void
     var onMenu: (() -> Void)? = nil
     @AppStorage("slate.calWeeks") private var weeks = 4
+    @AppStorage("slate.showGoogle") private var showGoogle = true
+    @AppStorage("slate.hiddenCalendars") private var hiddenCalendars = ""
     @AppStorage("slate.calMode") private var mode = "focus"
     @AppStorage("slate.calAnchor") private var anchor = Day.iso()
     @AppStorage("slate.calOpenedOn") private var openedOn = ""
@@ -1344,7 +1370,8 @@ struct CalendarScreen: View {
 
     var body: some View {
         let tasksByDay = Dictionary(grouping: store.tasks.filter { taskOpen($0) && $0.dueOn != nil }, by: { $0.dueOn! })
-        let eventsByDay = Dictionary(grouping: google, by: \.day)
+        let visibleGoogle = GoogleCalendarChoice.visible(google, show: showGoogle, hiddenRaw: hiddenCalendars)
+        let eventsByDay = Dictionary(grouping: visibleGoogle, by: \.day)
         VStack(spacing: 0) {
             header
             Group {
@@ -2187,7 +2214,12 @@ struct CountdownScreen: View {
     private var palette: SlatePalette { SlatePalette(scheme: scheme) }
 
     var body: some View {
-        let items = store.countdowns.filter { $0.deletedAt == nil }.sorted { $0.sort < $1.sort }
+        let items = store.countdowns.filter { $0.deletedAt == nil }.sorted {
+            let left = Day.countdownDay($0)
+            let right = Day.countdownDay($1)
+            if left == right { return $0.title < $1.title }
+            return left < right
+        }
         ScrollView {
             VStack(alignment: .leading, spacing: 10) {
                 Text("Countdown").font(.title3.bold()).frame(maxWidth: .infinity)

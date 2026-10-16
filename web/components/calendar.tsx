@@ -1,26 +1,31 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type WheelEvent as ReactWheelEvent } from "react";
 import { patchUi, useUiSettings } from "@/lib/ui-settings";
 import {
   addDays,
+  addMonths,
   alive,
   countdownAmount,
   daysBetween,
   formatDay,
   formatTime,
+  habitCheckId,
   parseDay,
   startOfWeek,
   taskOpen,
   type CountdownRecord,
+  type HabitRecord,
   type ListRecord,
   type TaskRecord,
 } from "@/lib/model";
 import { GOOGLE_CHANGED, rememberGoogle, storedGoogle, type GEvent } from "@/lib/google-client";
 import { Check } from "./check";
-import { today, usePlanner } from "./planner-context";
+import { checkFor, today, usePlanner } from "./planner-context";
 
-type Mode = "month" | "weeks" | "week" | "day" | "agenda";
+type Mode = "focus" | "month" | "weeks" | "week" | "day" | "agenda";
+
+const PHONE_QUERY = "(max-width: 980px)";
 
 type Detail =
   | { kind: "event"; event: GEvent }
@@ -29,16 +34,18 @@ type Detail =
 const MODES: Mode[] = ["month", "weeks", "week", "day", "agenda"];
 export function CalendarView({
   onSelect,
+  onMenu,
+  onDay,
 }: {
   onSelect: (id: string) => void;
+  onMenu?: () => void;
+  onDay?: (day: string) => void;
 }) {
   const { data, save, completeTask } = usePlanner();
   const settings = useUiSettings();
-  const [mode, setMode] = useState<Mode>(() => {
-    if (typeof window === "undefined") return "weeks";
-    const stored = window.sessionStorage.getItem("slate-cal-mode");
-    return stored === "month" || stored === "weeks" || stored === "week" || stored === "day" || stored === "agenda" ? stored : "weeks";
-  });
+  const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE_QUERY).matches);
+  const [mode, setMode] = useState<Mode>(() => initialMode());
+  const [viewsOpen, setViewsOpen] = useState(false);
   const [shownWeeks, setShownWeeks] = useState(settings.calWeeks);
   const [anchor, setAnchor] = useState(() => (typeof window === "undefined" ? today() : window.sessionStorage.getItem("slate-cal-anchor") || today()));
   const [visibleDay, setVisibleDay] = useState(startOfWeek(today()));
@@ -56,6 +63,11 @@ export function CalendarView({
   const lists = alive(data.lists);
   const countdowns = alive(data.countdowns);
   const range = useMemo(() => {
+    if (mode === "focus") {
+      const month = `${anchor.slice(0, 7)}-01`;
+      const start = addDays(startOfWeek(month), -7);
+      return { start, end: addDays(start, 56) };
+    }
     if (mode === "month" || mode === "weeks") return span;
     if (mode === "week") {
       const start = startOfWeek(anchor);
@@ -66,9 +78,26 @@ export function CalendarView({
   }, [mode, anchor, span]);
 
   useEffect(() => {
-    window.sessionStorage.setItem("slate-cal-mode", mode);
+    const media = window.matchMedia(PHONE_QUERY);
+    const apply = () => setNarrow(media.matches);
+    apply();
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (!narrow && mode === "focus") setMode("weeks");
+  }, [narrow, mode]);
+
+  useEffect(() => {
+    onDay?.(anchor);
+  }, [anchor, onDay]);
+
+  useEffect(() => {
+    if (narrow) window.sessionStorage.setItem("slate-cal-phone", mode);
+    else if (mode !== "focus") window.sessionStorage.setItem("slate-cal-mode", mode);
     window.sessionStorage.setItem("slate-cal-anchor", anchor);
-  }, [mode, anchor]);
+  }, [mode, anchor, narrow]);
 
   useEffect(() => {
     if (!settings.showGoogle) {
@@ -131,6 +160,7 @@ export function CalendarView({
 
   function chooseMode(next: Mode) {
     setMode(next);
+    setViewsOpen(false);
     if (next === "month") setShownWeeks(6);
     if (next === "weeks") setShownWeeks(settings.calWeeks);
   }
@@ -163,6 +193,38 @@ export function CalendarView({
     onSelect(id);
   }
 
+  if (narrow && mode === "focus") {
+    return (
+      <FocusCalendar
+        anchor={anchor}
+        tasks={data.tasks.filter((task) => !task.deletedAt)}
+        openTasks={tasks}
+        lists={lists}
+        habits={alive(data.habits).filter((habit) => !habit.archivedAt).sort((a, b) => a.sort - b.sort)}
+        checks={data.habitChecks}
+        events={events}
+        viewsOpen={viewsOpen}
+        onViews={() => setViewsOpen((open) => !open)}
+        onMode={chooseMode}
+        onDay={setAnchor}
+        onMenu={onMenu}
+        onTask={openTask}
+        onComplete={completeTask}
+        onCheck={(habit) => {
+          const count = checkFor(data.habitChecks, habit.id, anchor)?.count ?? 0;
+          const done = count >= habit.goal;
+          save("habitChecks", {
+            id: habitCheckId(habit.id, anchor),
+            habitId: habit.id,
+            day: anchor,
+            count: done ? 0 : count + 1,
+            updatedAt: new Date().toISOString(),
+          });
+        }}
+      />
+    );
+  }
+
   const label = mode === "day"
     ? parseDay(anchor).toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric" })
     : parseDay(mode === "month" || mode === "weeks" ? visibleDay : mode === "week" ? startOfWeek(anchor) : anchor).toLocaleDateString(undefined, { month: "long", year: "numeric" });
@@ -172,9 +234,15 @@ export function CalendarView({
   return (
     <section className="stage cal-stage">
       <header>
+        {narrow && (
+          <button type="button" className="focus-glass" aria-label="Lists" onClick={onMenu}>
+            <MenuIcon />
+          </button>
+        )}
         <h1>{label}</h1>
         <div className="cal-tools">
-          <button type="button" className={detailed ? "cal-chip on" : "cal-chip"} onClick={() => setDetailed((value) => !value)}>Detailed</button>
+          {narrow && <button type="button" className="cal-chip back-focus" onClick={() => chooseMode("focus")}>Agenda</button>}
+          <button type="button" className={detailed ? "cal-chip on density" : "cal-chip density"} onClick={() => setDetailed((value) => !value)}>Detailed</button>
           <div className="seg cal-seg">
             {MODES.map((item) => (
               <button key={item} type="button" className={mode === item ? "on" : ""} onClick={() => chooseMode(item)}>
@@ -233,6 +301,16 @@ export function CalendarView({
       </div>
     </section>
   );
+}
+
+function initialMode(): Mode {
+  if (typeof window === "undefined") return "weeks";
+  const phone = window.matchMedia(PHONE_QUERY).matches;
+  const stored = window.sessionStorage.getItem(phone ? "slate-cal-phone" : "slate-cal-mode");
+  const phoneModes: Mode[] = ["focus", "month", "week", "day", "agenda"];
+  const desktopModes: Mode[] = ["month", "weeks", "week", "day", "agenda"];
+  if (phone) return phoneModes.includes(stored as Mode) ? stored as Mode : "focus";
+  return desktopModes.includes(stored as Mode) ? stored as Mode : "weeks";
 }
 
 function detailKey(detail: Detail | null): string | null {
@@ -817,4 +895,285 @@ function isoWeek(value: string): number {
   const weekOne = new Date(target.getFullYear(), 0, 4);
   weekOne.setDate(weekOne.getDate() - ((weekOne.getDay() + 6) % 7));
   return 1 + Math.round((target.getTime() - weekOne.getTime()) / 604_800_000);
+}
+
+const PHONE_VIEWS: { mode: Mode; label: string }[] = [
+  { mode: "month", label: "Month" },
+  { mode: "week", label: "Week" },
+  { mode: "day", label: "Day" },
+  { mode: "agenda", label: "List" },
+];
+
+function FocusCalendar({
+  anchor,
+  tasks,
+  openTasks,
+  lists,
+  habits,
+  checks,
+  events,
+  viewsOpen,
+  onViews,
+  onMode,
+  onDay,
+  onMenu,
+  onTask,
+  onComplete,
+  onCheck,
+}: {
+  anchor: string;
+  tasks: TaskRecord[];
+  openTasks: TaskRecord[];
+  lists: ListRecord[];
+  habits: HabitRecord[];
+  checks: { habitId: string; day: string; count: number }[];
+  events: GEvent[];
+  viewsOpen: boolean;
+  onViews: () => void;
+  onMode: (mode: Mode) => void;
+  onDay: (day: string) => void;
+  onMenu?: () => void;
+  onTask: (id: string) => void;
+  onComplete: (task: TaskRecord) => void;
+  onCheck: (habit: HabitRecord) => void;
+}) {
+  const [monthOpen, setMonthOpen] = useState(false);
+  const scroller = useRef<HTMLDivElement>(null);
+  const pull = useRef<number | null>(null);
+  const dayWord = anchor === today() ? "Today" : formatDay(anchor, today());
+  const dayTasks = tasks
+    .filter((task) => task.dueOn === anchor)
+    .sort((a, b) => (a.completedAt ? 1 : 0) - (b.completedAt ? 1 : 0) || (a.dueTime ?? "99").localeCompare(b.dueTime ?? "99") || a.sort - b.sort);
+  const dayEvents = events.filter((event) => event.day === anchor);
+  const marked = (day: string) => openTasks.some((task) => task.dueOn === day) || events.some((event) => event.day === day);
+
+  function onWheel(event: ReactWheelEvent<HTMLDivElement>) {
+    if (event.currentTarget.scrollTop <= 0 && event.deltaY < -8) setMonthOpen(true);
+    if (monthOpen && event.deltaY > 12) setMonthOpen(false);
+  }
+
+  return (
+    <section className="stage cal-stage focus-stage">
+      <header className="focus-head">
+        <button type="button" className="focus-glass" aria-label="Lists" onClick={onMenu}>
+          <MenuIcon />
+        </button>
+        <button type="button" className="focus-title" onClick={() => onDay(today())}>
+          <strong>{parseDay(anchor).toLocaleDateString(undefined, { month: "long" })}</strong>
+          <span>{dayWord}</span>
+        </button>
+        <div className="focus-capsule">
+          <button type="button" aria-label="Month" onClick={() => onMode("month")}>
+            <GridIcon />
+          </button>
+          <button type="button" aria-label="More views" aria-expanded={viewsOpen} onClick={onViews}>
+            <DotsIcon />
+          </button>
+        </div>
+      </header>
+      {viewsOpen && (
+        <div className="focus-menu" role="menu">
+          {PHONE_VIEWS.map((item) => (
+            <button key={item.mode} type="button" role="menuitem" onClick={() => onMode(item.mode)}>{item.label}</button>
+          ))}
+        </div>
+      )}
+      <div className="focus-cal">
+        {monthOpen ? (
+          <MonthStrip day={anchor} marked={marked} onDay={(day) => { onDay(day); setMonthOpen(false); }} />
+        ) : (
+          <WeekStrip day={anchor} marked={marked} onDay={onDay} />
+        )}
+        <button type="button" className="focus-grab" aria-label={monthOpen ? "Show week" : "Show month"} onClick={() => setMonthOpen((open) => !open)}>
+          <i />
+        </button>
+      </div>
+      <div
+        className="focus-scroll"
+        ref={scroller}
+        onWheel={onWheel}
+        onTouchStart={(event) => { pull.current = event.touches[0]?.clientY ?? null; }}
+        onTouchEnd={(event) => {
+          if (pull.current == null) return;
+          const next = event.changedTouches[0]?.clientY ?? pull.current;
+          const delta = next - pull.current;
+          const atTop = (scroller.current?.scrollTop ?? 0) <= 0;
+          if (atTop && delta > 36) setMonthOpen(true);
+          if (delta < -36) setMonthOpen(false);
+          pull.current = null;
+        }}
+      >
+        <article className="focus-card">
+          <h2>{dayWord}</h2>
+          {dayTasks.length === 0 && dayEvents.length === 0 && <p className="focus-empty">Nothing scheduled</p>}
+          {dayEvents.map((event) => (
+            <div key={event.id} className="focus-row" style={{ ["--bar" as string]: event.color }}>
+              <span className="focus-g">G</span>
+              <span className="focus-name">{event.title}</span>
+              <span className="focus-when"><span>{event.time ? formatTime(event.time) : dayWord}</span></span>
+            </div>
+          ))}
+          {dayTasks.map((task) => {
+            const color = lists.find((list) => list.id === task.listId)?.color ?? "var(--blue)";
+            const done = Boolean(task.completedAt);
+            return (
+              <div key={task.id} className={done ? "focus-row dim" : "focus-row"} style={{ ["--bar" as string]: color }}>
+                <button type="button" className={done ? "focus-check on" : "focus-check"} aria-label={done ? "Mark open" : "Complete"} onClick={() => onComplete(task)} />
+                <button type="button" className="focus-name" onClick={() => onTask(task.id)}>{task.title}</button>
+                <span className="focus-when">
+                  <span>{task.dueTime ? formatTime(task.dueTime) : dayWord}</span>
+                  {task.repeat && (
+                    <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8a4.8 4.8 0 0 1 8.1-3.5M12.8 8A4.8 4.8 0 0 1 4.7 11.5M11 3.2h1.8V5M5 12.8H3.2V11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
+                  )}
+                </span>
+              </div>
+            );
+          })}
+        </article>
+        {habits.length > 0 && (
+          <article className="focus-card">
+            <h2>Habit</h2>
+            {habits.map((habit) => {
+              const count = checks.find((check) => check.habitId === habit.id && check.day === anchor)?.count ?? 0;
+              const done = count >= habit.goal;
+              return (
+                <button key={habit.id} type="button" className={done ? "focus-row dim" : "focus-row"} onClick={() => onCheck(habit)}>
+                  <span className={done ? "focus-habit on" : "focus-habit"} style={{ color: habit.color }} />
+                  <span className="focus-name">{habit.name}</span>
+                  <span className="focus-when"><span>{dayWord}</span></span>
+                </button>
+              );
+            })}
+          </article>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function WeekStrip({ day, marked, onDay }: { day: string; marked: (day: string) => boolean; onDay: (day: string) => void }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const skip = useRef(false);
+  const origin = startOfWeek(today());
+  const weeks = useMemo(() => Array.from({ length: 105 }, (_, index) => addDays(origin, (index - 52) * 7)), [origin]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const page = el?.querySelector<HTMLElement>(`[data-week="${startOfWeek(day)}"]`);
+    if (!el || !page) return;
+    skip.current = true;
+    el.scrollLeft = page.offsetLeft;
+    requestAnimationFrame(() => { skip.current = false; });
+  }, [day]);
+
+  function onScroll() {
+    if (skip.current) return;
+    const el = scroller.current;
+    if (!el || el.clientWidth < 1) return;
+    const start = weeks[Math.round(el.scrollLeft / el.clientWidth)];
+    if (!start || start === startOfWeek(day)) return;
+    onDay(addDays(start, parseDay(day).getDay()));
+  }
+
+  return (
+    <div className="focus-strip" ref={scroller} onScroll={onScroll}>
+      {weeks.map((start) => (
+        <div key={start} className="focus-week" data-week={start}>
+          {Array.from({ length: 7 }, (_, index) => addDays(start, index)).map((item, index) => (
+            <DayCell key={item} day={item} selected={item === day} marked={marked(item)} showName weekLabel={index === 0 ? `W${sundayWeek(item)}` : ""} onPick={() => onDay(item)} />
+          ))}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function MonthStrip({ day, marked, onDay }: { day: string; marked: (day: string) => boolean; onDay: (day: string) => void }) {
+  const scroller = useRef<HTMLDivElement>(null);
+  const skip = useRef(false);
+  const current = `${today().slice(0, 7)}-01`;
+  const months = useMemo(() => Array.from({ length: 49 }, (_, index) => addMonths(current, index - 24)), [current]);
+
+  useLayoutEffect(() => {
+    const el = scroller.current;
+    const page = el?.querySelector<HTMLElement>(`[data-month="${day.slice(0, 7)}"]`);
+    if (!el || !page) return;
+    skip.current = true;
+    el.scrollLeft = page.offsetLeft;
+    requestAnimationFrame(() => { skip.current = false; });
+  }, [day]);
+
+  function onScroll() {
+    if (skip.current) return;
+    const el = scroller.current;
+    if (!el || el.clientWidth < 1) return;
+    const month = months[Math.round(el.scrollLeft / el.clientWidth)];
+    if (!month || month.slice(0, 7) === day.slice(0, 7)) return;
+    onDay(month === current ? today() : month);
+  }
+
+  return (
+    <div className="focus-month">
+      <div className="focus-dows">{["S", "M", "T", "W", "T", "F", "S"].map((label, index) => <span key={`${label}${index}`}>{label}</span>)}</div>
+      <div className="focus-strip" ref={scroller} onScroll={onScroll}>
+        {months.map((month) => {
+          const origin = startOfWeek(month);
+          return (
+            <div key={month} className="focus-month-page" data-month={month.slice(0, 7)}>
+              {Array.from({ length: 42 }, (_, index) => addDays(origin, index)).map((item) => (
+                <DayCell key={item} day={item} selected={item === day} marked={marked(item)} outside={!item.startsWith(month.slice(0, 7))} showName={false} onPick={() => onDay(item)} />
+              ))}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function DayCell({
+  day,
+  selected,
+  marked,
+  outside = false,
+  showName = false,
+  weekLabel = "",
+  onPick,
+}: {
+  day: string;
+  selected: boolean;
+  marked: boolean;
+  outside?: boolean;
+  showName?: boolean;
+  weekLabel?: string;
+  onPick: () => void;
+}) {
+  const todayMark = day === today();
+  return (
+    <button type="button" className={["focus-day", selected ? "on" : "", outside ? "out" : "", todayMark ? "today" : ""].filter(Boolean).join(" ")} onClick={onPick}>
+      {showName && <span>{parseDay(day).toLocaleDateString(undefined, { weekday: "narrow" })}</span>}
+      <strong>{parseDay(day).getDate()}</strong>
+      {marked ? <i /> : weekLabel ? <em>{weekLabel}</em> : <i className="clear" />}
+    </button>
+  );
+}
+
+function sundayWeek(value: string): number {
+  const date = parseDay(value);
+  const yearStart = new Date(date.getFullYear(), 0, 1);
+  const start = new Date(yearStart);
+  start.setDate(1 - start.getDay());
+  return 1 + Math.round((date.getTime() - start.getTime()) / 604_800_000);
+}
+
+function MenuIcon() {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4.5h10M3 8h10M3 11.5h10" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" /></svg>;
+}
+
+function GridIcon() {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3 3h3.2v3.2H3zM6.4 3h3.2v3.2H6.4zM9.8 3H13v3.2H9.8zM3 6.4h3.2v3.2H3zM6.4 6.4h3.2v3.2H6.4zM9.8 6.4H13v3.2H9.8zM3 9.8h3.2V13H3zM6.4 9.8h3.2V13H6.4zM9.8 9.8H13V13H9.8z" fill="none" stroke="currentColor" strokeWidth="1.1" /></svg>;
+}
+
+function DotsIcon() {
+  return <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M4 8h.01M8 8h.01M12 8h.01" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" /></svg>;
 }
