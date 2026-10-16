@@ -23,7 +23,7 @@
 		9682F5D4325C3D73C6668218 /* Views.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Views.swift; sourceTree = "<group>"; };
 		9EE81B358BE70095EC8A119F /* Models.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Models.swift; sourceTree = "<group>"; };
 		CCD5D85D2B12BF59A465BCB6 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist; path = Info.plist; sourceTree = "<group>"; };
-		D894A56720A4907256863B27 /* Slate.app */ = {isa = PBXFileReference; includeInIndex = 0; lastKnownFileType = wrapper.application; path = Slate.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		D894A56720A4907256863B27 /* Slate.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Slate.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXGroup section */
@@ -88,7 +88,7 @@
 				LastUpgradeCheck = 1430;
 				TargetAttributes = {
 					2722D81FC59EDC8E0ABD5EFD = {
-						DevelopmentTeam = "";
+						DevelopmentTeam = D76FU63926;
 						ProvisioningStyle = Automatic;
 					};
 				};
@@ -145,7 +145,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = D76FU63926;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Slate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
@@ -222,7 +222,7 @@
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
 				CODE_SIGN_IDENTITY = "iPhone Developer";
 				CODE_SIGN_STYLE = Automatic;
-				DEVELOPMENT_TEAM = "";
+				DEVELOPMENT_TEAM = D76FU63926;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = Slate/Info.plist;
 				LD_RUNPATH_SEARCH_PATHS = (
