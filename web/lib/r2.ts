@@ -1,3 +1,4 @@
+import { localStorageEnabled, localReady, localGet, localPut, localDelete, localKeys } from "./local-store.ts";
 import {
   DeleteObjectCommand,
   GetObjectCommand,
@@ -34,10 +35,15 @@ function r2(): S3Client {
 }
 
 export async function bucketReady(): Promise<void> {
+  if (localStorageEnabled()) return localReady();
   await r2().send(new HeadBucketCommand({ Bucket: bucketName() }));
 }
 
 export async function getText(key: string): Promise<string | null> {
+  if (localStorageEnabled()) {
+    const value = await localGet(key);
+    return value ? Buffer.from(value.body).toString("utf8") : null;
+  }
   try {
     const result = await r2().send(new GetObjectCommand({ Bucket: bucketName(), Key: key }));
     return (await result.Body?.transformToString()) ?? null;
@@ -48,6 +54,7 @@ export async function getText(key: string): Promise<string | null> {
 }
 
 export async function getBytes(key: string): Promise<{ body: Uint8Array; type: string } | null> {
+  if (localStorageEnabled()) return localGet(key);
   try {
     const result = await r2().send(new GetObjectCommand({ Bucket: bucketName(), Key: key }));
     const bytes = await result.Body?.transformToByteArray();
@@ -60,6 +67,7 @@ export async function getBytes(key: string): Promise<{ body: Uint8Array; type: s
 }
 
 export async function putText(key: string, body: string): Promise<void> {
+  if (localStorageEnabled()) return localPut(key, Buffer.from(body), "application/json");
   await r2().send(
     new PutObjectCommand({
       Bucket: bucketName(),
@@ -71,6 +79,7 @@ export async function putText(key: string, body: string): Promise<void> {
 }
 
 export async function putBytes(key: string, body: Uint8Array, type: string): Promise<void> {
+  if (localStorageEnabled()) return localPut(key, body, type);
   await r2().send(
     new PutObjectCommand({
       Bucket: bucketName(),
@@ -82,10 +91,12 @@ export async function putBytes(key: string, body: Uint8Array, type: string): Pro
 }
 
 export async function deleteKey(key: string): Promise<void> {
+  if (localStorageEnabled()) return localDelete(key);
   await r2().send(new DeleteObjectCommand({ Bucket: bucketName(), Key: key }));
 }
 
 export async function listKeys(prefix: string): Promise<string[]> {
+  if (localStorageEnabled()) return localKeys(prefix);
   const keys: string[] = [];
   let token: string | undefined;
   do {

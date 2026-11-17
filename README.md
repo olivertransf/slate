@@ -42,3 +42,16 @@ Open `ios/Slate.xcodeproj` in Xcode and run the Slate scheme. The app talks to t
 ## What syncs
 
 Lists, tasks, tags, habits, habit check-ins, and countdowns sync through `/api/sync`. A Google Calendar refresh token, when you sign in, is stored encrypted on the server so every unlocked device can read the same calendars.
+
+## Local-only preview
+
+For a preview without Cloudflare credentials, set `SLATE_STORAGE=local` in
+`web/.env.local`, along with `SYNC_PASSPHRASE_HASH` and `SESSION_SECRET` as above.
+Run `npm run dev -- --hostname 127.0.0.1 --port 3000` from `web/`.
+The passphrase lock remains enabled. Records and attachments persist in
+`web/.slate-local/` (ignored by Git); they do not sync to Cloudflare.
+Escape each `$` in the generated hash as `\$` when putting it in `.env.local`,
+because Next.js expands environment variable references.
+`SLATE_LOCAL_DIR` can override that storage directory. Remove `SLATE_STORAGE=local`
+and supply the R2 settings to use the cloud store; local data is not automatically
+migrated. Use Settings backups if you want to transfer it.

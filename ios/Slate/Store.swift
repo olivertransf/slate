@@ -53,6 +53,7 @@ final class PlannerStore {
         if let cached = loadCache() { apply(cached, replace: true) }
         loadGoogleFile()
         loadPending()
+        overlayPending()
         unlocked = token != nil
         ready = true
         if token != nil {
@@ -154,6 +155,7 @@ final class PlannerStore {
         guard let data = try? JSONEncoder().encode(record),
               let json = String(data: data, encoding: .utf8) else { return }
         pending["\(kind):\(record.id)"] = Pending(kind: kind, id: record.id, json: json)
+        flushToken = UUID().uuidString
         savePending()
         scheduleReminders()
         Task { await flush() }
@@ -162,9 +164,13 @@ final class PlannerStore {
     private func pull() async {
         guard unlocked, let client = client() else { return }
         do {
-            guard let remote = try await client.manifest(known: revision), remote != revision else { return }
-            let snapshot = try await client.snapshot(after: revision)
-            apply(snapshot, replace: snapshot.reset)
+            let baseRevision = revision
+            if let remote = try await client.manifest(known: baseRevision), remote != baseRevision {
+                let snapshot = try await client.snapshot(after: baseRevision)
+                if revision == baseRevision || snapshot.revision >= revision {
+                    apply(snapshot, replace: snapshot.reset)
+                }
+            }
             if !pending.isEmpty { await flush() }
         } catch APIError.locked {
             lock()
@@ -173,40 +179,46 @@ final class PlannerStore {
         }
     }
 
-    private func flush() async {
+    private func flush(retries: Int = 3) async {
         guard !flushing, !pending.isEmpty, let client = client() else { return }
         flushing = true
         syncing = true
         let batch = pending
-        let token = flushToken
-        pending = [:]
+        let mutation = flushToken
+        let baseRevision = revision
         var records: [String: [Any]] = [:]
         for item in batch.values {
             guard let data = item.json.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: data) else { continue }
             records[item.kind, default: []].append(object)
         }
+        var shouldContinue = false
+        var remainingRetries = retries
         do {
-            let snapshot = try await client.push(baseRevision: revision, records: records, mutationId: token)
-            apply(snapshot, replace: snapshot.reset)
-            if flushToken == token { flushToken = UUID().uuidString }
+            let snapshot = try await client.push(baseRevision: baseRevision, records: records, mutationId: mutation)
+            for (key, value) in batch where pending[key]?.json == value.json { pending.removeValue(forKey: key) }
+            if revision == baseRevision || snapshot.revision >= revision {
+                apply(snapshot, replace: snapshot.reset)
+            }
+            if flushToken == mutation { flushToken = UUID().uuidString }
             error = nil
             savePending()
+            shouldContinue = true
         } catch let APIError.conflict(snapshot) {
-            for (key, value) in batch where pending[key] == nil { pending[key] = value }
-            savePending()
-            apply(snapshot, replace: snapshot.reset)
-            flushing = false
-            syncing = false
-            await flush()
-            return
+            if revision == baseRevision || snapshot.revision >= revision {
+                apply(snapshot, replace: snapshot.reset)
+            }
+            shouldContinue = retries > 0
+            remainingRetries -= 1
+            if !shouldContinue { error = "Slate couldn’t reconcile changes yet. It will retry on the next refresh." }
+        } catch APIError.locked {
+            lock()
         } catch {
-            for (key, value) in batch where pending[key] == nil { pending[key] = value }
-            savePending()
-            self.error = "Changes are saved on this device and will sync when the connection returns."
+            self.error = "Changes haven’t synced yet. Slate will retry automatically."
         }
         flushing = false
         syncing = false
+        if shouldContinue && !pending.isEmpty { await flush(retries: remainingRetries) }
     }
 
     private func apply(_ snapshot: Snapshot, replace: Bool) {

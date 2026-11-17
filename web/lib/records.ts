@@ -93,6 +93,9 @@ function listOf(value: unknown): ListRecord | null {
   const archivedAt = nullableStamp(record.archivedAt);
   if (!id || !name || !color || sort == null || !updatedAt || deletedAt === undefined || archivedAt === undefined) return null;
   if (!Array.isArray(record.sections)) return null;
+  if (record.area !== undefined && (typeof record.area !== "string" || record.area.length > 80)) return null;
+  if (record.description !== undefined && (typeof record.description !== "string" || record.description.length > 2000)) return null;
+  if (record.favorite !== undefined && typeof record.favorite !== "boolean") return null;
   const sections = [];
   for (const section of record.sections) {
     const item = objectOf(section);
@@ -103,15 +106,22 @@ function listOf(value: unknown): ListRecord | null {
     if (!sectionId || !sectionName || sectionSort == null) return null;
     sections.push({ id: sectionId, name: sectionName, sort: sectionSort });
   }
-  return { id, name, color, sort, sections, archivedAt, updatedAt, deletedAt };
+  return {
+    id, name, color, sort, sections, archivedAt, updatedAt, deletedAt,
+    ...(typeof record.sourceId === "string" && record.sourceId.length <= 80 ? { sourceId: record.sourceId } : {}),
+    ...(typeof record.area === "string" ? { area: record.area.trim() } : {}),
+    ...(typeof record.description === "string" ? { description: record.description } : {}),
+    ...(typeof record.favorite === "boolean" ? { favorite: record.favorite } : {}),
+  };
 }
 
 function taskOf(value: unknown): TaskRecord | null {
   const record = objectOf(value);
   if (!record) return null;
   const id = idOf(record.id);
+  if (record.kind !== undefined && record.kind !== "task" && record.kind !== "note") return null;
   const title = text(record.title, 500);
-  const notes = typeof record.notes === "string" && record.notes.length <= 20000 ? record.notes : null;
+  const notes = typeof record.notes === "string" && record.notes.length <= 200000 ? record.notes : null;
   const priority = numberOf(record.priority);
   const sort = numberOf(record.sort);
   const updatedAt = stampOf(record.updatedAt);
@@ -121,6 +131,25 @@ function taskOf(value: unknown): TaskRecord | null {
   const sectionId = nullableText(record.sectionId, 80);
   const dueOn = dayOf(record.dueOn);
   const startOn = dayOf(record.startOn);
+  const startTime = timeOf(record.startTime);
+  const duration = record.durationMinutes;
+  const repeatUntil = dayOf(record.repeatUntil);
+  let repeatHistory: TaskRecord["repeatHistory"];
+  if (record.repeatHistory !== undefined) {
+    if (!Array.isArray(record.repeatHistory) || record.repeatHistory.length > 365) return null;
+    repeatHistory = [];
+    for (const raw of record.repeatHistory) {
+      const occurrence = objectOf(raw);
+      const dueOn = dayOf(occurrence?.dueOn);
+      const completedAt = stampOf(occurrence?.completedAt);
+      if (!dueOn || !completedAt) return null;
+      repeatHistory.push({ dueOn, completedAt });
+    }
+  }
+  if (repeatUntil === undefined || (record.repeatAfterCompletion !== undefined && typeof record.repeatAfterCompletion !== "boolean")) return null;
+  if (startTime === undefined || (startTime && !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(startTime))) return null;
+  if (duration != null && (typeof duration !== "number" || !Number.isInteger(duration) || duration < 1 || duration > 1440)) return null;
+  if (record.someday !== undefined && typeof record.someday !== "boolean") return null;
   const dueTime = timeOf(record.dueTime);
   const repeat = repeatOf(record.repeat);
   const remind = record.remindMinutesBefore == null ? null : numberOf(record.remindMinutesBefore);
@@ -144,6 +173,7 @@ function taskOf(value: unknown): TaskRecord | null {
     id,
     title,
     notes,
+    ...(record.kind !== undefined ? { kind: record.kind as "task" | "note" } : {}),
     listId,
     sectionId,
     priority: priority as TaskRecord["priority"],
@@ -151,7 +181,13 @@ function taskOf(value: unknown): TaskRecord | null {
     dueOn,
     dueTime,
     startOn,
+    ...(record.startTime !== undefined ? { startTime } : {}),
+    ...(duration !== undefined ? { durationMinutes: duration as number | null } : {}),
+    ...(typeof record.someday === "boolean" ? { someday: record.someday } : {}),
     repeat,
+    ...(record.repeatUntil !== undefined ? { repeatUntil } : {}),
+    ...(repeatHistory ? { repeatHistory } : {}),
+    ...(typeof record.repeatAfterCompletion === "boolean" ? { repeatAfterCompletion: record.repeatAfterCompletion } : {}),
     remindMinutesBefore: remind == null ? null : Math.max(0, Math.min(10080, Math.floor(remind))),
     completedAt,
     subtasks,
@@ -185,6 +221,9 @@ function habitOf(value: unknown): HabitRecord | null {
   const deletedAt = nullableStamp(record.deletedAt);
   const archivedAt = nullableStamp(record.archivedAt);
   const reminderTime = timeOf(record.reminderTime);
+  const weekdays = record.weekdays;
+  if (weekdays !== undefined && (!Array.isArray(weekdays) || !weekdays.every((day) => Number.isInteger(day) && day >= 0 && day <= 6))) return null;
+  if (record.goalUnit !== undefined && (typeof record.goalUnit !== "string" || record.goalUnit.length > 32)) return null;
   if (
     !id || !name || !color || sort == null || goal == null || goal < 1 || goal > 100 || !updatedAt ||
     deletedAt === undefined || archivedAt === undefined || reminderTime === undefined ||
@@ -195,6 +234,8 @@ function habitOf(value: unknown): HabitRecord | null {
     name,
     color,
     cadence: record.cadence,
+    ...(Array.isArray(weekdays) ? { weekdays: [...new Set<number>(weekdays)] } : {}),
+    ...(typeof record.goalUnit === "string" ? { goalUnit: record.goalUnit } : {}),
     goal: Math.floor(goal),
     sort,
     archivedAt,
@@ -227,6 +268,9 @@ function countdownOf(value: unknown): CountdownRecord | null {
   const updatedAt = stampOf(record.updatedAt);
   const deletedAt = nullableStamp(record.deletedAt);
   const imageKey = record.imageKey == null ? null : text(record.imageKey, 160);
+  const projectId = nullableText(record.projectId, 80);
+  if (projectId === undefined) return null;
+  if (["pinned", "showOnCalendar", "completed"].some((field) => record[field] !== undefined && typeof record[field] !== "boolean")) return null;
   const remind = record.remindDaysBefore == null ? null : numberOf(record.remindDaysBefore);
   if (
     !id || !title || !day || !color || sort == null || !updatedAt || deletedAt === undefined || imageKey === undefined ||
@@ -244,6 +288,10 @@ function countdownOf(value: unknown): CountdownRecord | null {
     unit: record.unit,
     color,
     imageKey,
+    ...(record.projectId !== undefined ? { projectId } : {}),
+    ...(typeof record.pinned === "boolean" ? { pinned: record.pinned } : {}),
+    ...(typeof record.showOnCalendar === "boolean" ? { showOnCalendar: record.showOnCalendar } : {}),
+    ...(typeof record.completed === "boolean" ? { completed: record.completed } : {}),
     remindDaysBefore: remind == null ? null : Math.max(0, Math.min(365, Math.floor(remind))),
     sort,
     updatedAt,

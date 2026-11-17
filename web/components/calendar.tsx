@@ -11,6 +11,7 @@ import {
   formatDay,
   formatTime,
   habitCheckId,
+  habitScheduled,
   parseDay,
   startOfWeek,
   taskOpen,
@@ -46,6 +47,10 @@ export function CalendarView({
   const [narrow, setNarrow] = useState(() => typeof window !== "undefined" && window.matchMedia(PHONE_QUERY).matches);
   const [mode, setMode] = useState<Mode>(() => initialMode());
   const [viewsOpen, setViewsOpen] = useState(false);
+  const [planningOpen, setPlanningOpen] = useState(false);
+  const [planningTaskId, setPlanningTaskId] = useState("");
+  const [planningTime, setPlanningTime] = useState("");
+  const [planningDuration, setPlanningDuration] = useState(60);
   const [shownWeeks, setShownWeeks] = useState(settings.calWeeks);
   const [anchor, setAnchor] = useState(() => (typeof window === "undefined" ? today() : window.sessionStorage.getItem("slate-cal-anchor") || today()));
   const [visibleDay, setVisibleDay] = useState(startOfWeek(today()));
@@ -183,8 +188,9 @@ export function CalendarView({
   function moveTask(task: TaskRecord, day: string, minutes: number | null) {
     save("tasks", {
       ...task,
-      dueOn: day,
-      dueTime: minutes == null ? task.dueTime : `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
+      startOn: day,
+      someday: false,
+      startTime: minutes == null ? task.startTime : `${String(Math.floor(minutes / 60)).padStart(2, "0")}:${String(minutes % 60).padStart(2, "0")}`,
     });
   }
 
@@ -200,7 +206,7 @@ export function CalendarView({
         tasks={data.tasks.filter((task) => !task.deletedAt)}
         openTasks={tasks}
         lists={lists}
-        habits={alive(data.habits).filter((habit) => !habit.archivedAt).sort((a, b) => a.sort - b.sort)}
+        habits={alive(data.habits).filter((habit) => !habit.archivedAt && habitScheduled(habit, anchor)).sort((a, b) => a.sort - b.sort)}
         checks={data.habitChecks}
         events={events}
         viewsOpen={viewsOpen}
@@ -242,6 +248,7 @@ export function CalendarView({
         <h1>{label}</h1>
         <div className="cal-tools">
           {narrow && <button type="button" className="cal-chip back-focus" onClick={() => chooseMode("focus")}>Agenda</button>}
+          <button type="button" className="cal-chip" aria-expanded={planningOpen} onClick={() => setPlanningOpen((open) => !open)}>Plan tasks</button>
           <button type="button" className={detailed ? "cal-chip on density" : "cal-chip density"} onClick={() => setDetailed((value) => !value)}>Detailed</button>
           <div className="seg cal-seg">
             {MODES.map((item) => (
@@ -264,6 +271,26 @@ export function CalendarView({
           </div>
         </div>
       </header>
+      {planningOpen && (
+        <form className="task-search-controls" onSubmit={(event) => {
+          event.preventDefault();
+          const task = tasks.find((item) => item.id === planningTaskId);
+          if (!task) return;
+          save("tasks", { ...task, startOn: anchor, startTime: planningTime || null, durationMinutes: planningTime ? planningDuration : null, someday: false });
+          setPlanningTaskId("");
+        }}>
+          <select aria-label="Unplanned task" value={planningTaskId} onChange={(event) => setPlanningTaskId(event.target.value)}>
+            <option value="">Choose an unplanned task</option>
+            {tasks.filter((task) => !task.startOn).map((task) => <option key={task.id} value={task.id}>{task.title}</option>)}
+          </select>
+          <label>Planned date <input type="date" required value={anchor} onChange={(event) => {
+            if (event.target.value) setAnchor(event.target.value);
+          }} /></label>
+          <label>Time <input type="time" value={planningTime} onChange={(event) => setPlanningTime(event.target.value)} /></label>
+          {planningTime && <label>Minutes <input type="number" min={1} max={1440} required value={planningDuration || ""} onChange={(event) => setPlanningDuration(Number(event.target.value))} /></label>}
+          <button type="submit" className="text-button" disabled={!planningTaskId}>Plan task</button>
+        </form>
+      )}
       <div className="cal-body">
         <div className="cal-main">
           {grid && (
@@ -288,10 +315,10 @@ export function CalendarView({
             />
           )}
           {mode === "week" && (
-            <TimeGrid anchor={startOfWeek(anchor)} days={7} hourHeight={hourHeight} onHourHeight={setHourHeight} tasks={tasks} lists={lists} countdowns={countdowns} events={events} detailed={detailed} onTask={openTask} onEvent={(event) => setDetail({ kind: "event", event })} onCountdown={(item, day) => setDetail({ kind: "countdown", item, day })} onMove={moveTask} onComplete={completeTask} />
+            <TimeGrid anchor={startOfWeek(anchor)} days={7} hourHeight={hourHeight} onHourHeight={setHourHeight} tasks={tasks} lists={lists} countdowns={countdowns} events={events} detailed={detailed} onTask={openTask} onEvent={(event) => setDetail({ kind: "event", event })} onCountdown={(item, day) => setDetail({ kind: "countdown", item, day })} onMove={moveTask} onResize={(task, durationMinutes) => save("tasks", { ...task, durationMinutes })} onComplete={completeTask} />
           )}
           {mode === "day" && (
-            <TimeGrid anchor={anchor} days={1} hourHeight={hourHeight} onHourHeight={setHourHeight} tasks={tasks} lists={lists} countdowns={countdowns} events={events} detailed={detailed} onTask={openTask} onEvent={(event) => setDetail({ kind: "event", event })} onCountdown={(item, day) => setDetail({ kind: "countdown", item, day })} onMove={moveTask} onComplete={completeTask} />
+            <TimeGrid anchor={anchor} days={1} hourHeight={hourHeight} onHourHeight={setHourHeight} tasks={tasks} lists={lists} countdowns={countdowns} events={events} detailed={detailed} onTask={openTask} onEvent={(event) => setDetail({ kind: "event", event })} onCountdown={(item, day) => setDetail({ kind: "countdown", item, day })} onMove={moveTask} onResize={(task, durationMinutes) => save("tasks", { ...task, durationMinutes })} onComplete={completeTask} />
           )}
           {mode === "agenda" && (
             <Agenda anchor={anchor} tasks={tasks} lists={lists} countdowns={countdowns} events={events} detailed={detailed} onTask={openTask} onEvent={(event) => setDetail({ kind: "event", event })} onCountdown={(item, day) => setDetail({ kind: "countdown", item, day })} onComplete={completeTask} />
@@ -556,18 +583,27 @@ function WeekBoard({
   );
 }
 
+function taskOnDay(task: TaskRecord, day: string) {
+  return task.dueOn === day || (!task.someday && task.startOn === day);
+}
+
+function taskTimeOnDay(task: TaskRecord, day: string) {
+  if (!task.someday && task.startOn === day) return task.startTime ?? null;
+  return task.dueOn === day ? task.dueTime : null;
+}
+
 function minutesOf(value: string | null): number {
   const [hour, minute] = (value ?? "09:00").split(":").map(Number);
   return (hour || 0) * 60 + (minute || 0);
 }
 
-function placeLanes(items: { key: string; start: number }[], duration = 60): Map<string, { column: number; columns: number }> {
+function placeLanes(items: { key: string; start: number; duration?: number }[]): Map<string, { column: number; columns: number }> {
   const sorted = [...items].sort((a, b) => a.start - b.start || a.key.localeCompare(b.key));
   const clusters: { key: string; start: number; end: number; column: number }[][] = [];
   let cluster: { key: string; start: number; end: number; column: number }[] = [];
   let clusterEnd = -1;
   for (const item of sorted) {
-    const end = item.start + duration;
+    const end = item.start + (item.duration ?? 60);
     if (cluster.length > 0 && item.start >= clusterEnd) {
       clusters.push(cluster);
       cluster = [];
@@ -587,10 +623,10 @@ function placeLanes(items: { key: string; start: number }[], duration = 60): Map
   return spots;
 }
 
-function laneStyle(start: number, spot: { column: number; columns: number }, hourHeight: number, color: string): React.CSSProperties {
+function laneStyle(start: number, spot: { column: number; columns: number }, hourHeight: number, color: string, duration = 60): React.CSSProperties {
   return {
     top: start * (hourHeight / 60),
-    height: Math.max(22, hourHeight),
+    height: Math.max(12, Math.min(duration, 1440 - start) * hourHeight / 60),
     left: `calc(${(spot.column / spot.columns) * 100}% + 2px)`,
     width: `calc(${100 / spot.columns}% - 4px)`,
     right: "auto",
@@ -612,6 +648,7 @@ function TimeGrid({
   onEvent,
   onCountdown,
   onMove,
+  onResize,
   onComplete,
 }: {
   anchor: string;
@@ -627,6 +664,7 @@ function TimeGrid({
   onEvent: (event: GEvent) => void;
   onCountdown: (item: CountdownRecord, day: string) => void;
   onMove: (task: TaskRecord, day: string, minutes: number | null) => void;
+  onResize: (task: TaskRecord, duration: number) => void;
   onComplete: (task: TaskRecord) => void;
 }) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -679,30 +717,36 @@ function TimeGrid({
           {hours.map((hour) => <div key={hour} className="hour" style={{ height: hourHeight }}>{formatTime(`${String(hour).padStart(2, "0")}:00`)}</div>)}
         </div>
         {columns.map((day) => {
-          const timedTasks = tasks.filter((task) => task.dueOn === day && task.dueTime);
+          const timedTasks = tasks.flatMap((task) => {
+            const planned = !task.someday && task.startOn === day && task.startTime;
+            if (planned) return [{ task, time: planned, duration: task.durationMinutes ?? 60 }];
+            if (!task.startOn && task.dueOn === day && task.dueTime) return [{ task, time: task.dueTime, duration: 60 }];
+            return [];
+          });
           const timedEvents = events.filter((event) => event.day === day && event.time);
           const spots = placeLanes([
-            ...timedTasks.map((task) => ({ key: `task:${task.id}`, start: minutesOf(task.dueTime) })),
+            ...timedTasks.map(({ task, time, duration }) => ({ key: `task:${task.id}`, start: minutesOf(time), duration })),
             ...timedEvents.map((event) => ({ key: `event:${event.id}`, start: minutesOf(event.time) })),
           ]);
           return (
             <div key={day} className="time-col" onDragOver={(event) => event.preventDefault()} onDrop={(event) => drop(event, day)}>
               {hours.map((hour) => <div key={hour} className="slot" style={{ height: hourHeight }} />)}
-              {timedTasks.map((task) => {
+              {timedTasks.map(({ task, time, duration }) => {
                 const spot = spots.get(`task:${task.id}`) ?? { column: 0, columns: 1 };
                 return (
-                  <button
-                    key={task.id}
-                    type="button"
-                    className="event"
-                    draggable
-                    style={laneStyle(minutesOf(task.dueTime), spot, hourHeight, taskColor(task, lists))}
+                  <div key={task.id} className="event task-time-block" draggable
+                    style={laneStyle(minutesOf(time), spot, hourHeight, taskColor(task, lists), duration)}
                     onDragStart={(event) => event.dataTransfer.setData("text/plain", task.id)}
-                    onClick={() => onTask(task.id)}
                   >
                     {detailed && <Check quiet on={false} onClick={() => onComplete(task)} />}
-                    {formatTime(task.dueTime)} {task.title}
-                  </button>
+                    <button type="button" className="time-block-title" onClick={() => onTask(task.id)}>
+                      {formatTime(time)} {task.title}
+                    </button>
+                    {!task.someday && task.startOn === day && task.startTime && (
+                      <DurationHandle title={task.title} duration={duration} max={1440 - minutesOf(time)} hourHeight={hourHeight}
+                        onResize={(minutes) => onResize(task, minutes)} />
+                    )}
+                  </div>
                 );
               })}
               {timedEvents.map((event) => {
@@ -718,6 +762,43 @@ function TimeGrid({
         })}
       </div>
     </div>
+  );
+}
+
+function DurationHandle({ title, duration, max, hourHeight, onResize }: {
+  title: string;
+  duration: number;
+  max: number;
+  hourHeight: number;
+  onResize: (duration: number) => void;
+}) {
+  const start = useRef<number | null>(null);
+  const clamp = (minutes: number) => Math.min(max, Math.max(1, minutes));
+  return (
+    <div className="time-block-resize" role="slider" tabIndex={0} draggable={false}
+      aria-label={`Duration for ${title}`} aria-orientation="vertical" aria-valuemin={1}
+      aria-valuemax={max} aria-valuenow={clamp(duration)} aria-valuetext={`${clamp(duration)} minutes`}
+      onDragStart={(event) => { event.preventDefault(); event.stopPropagation(); }}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+        start.current = event.clientY;
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerCancel={() => { start.current = null; }}
+      onPointerUp={(event) => {
+        if (start.current === null) return;
+        const delta = Math.round((event.clientY - start.current) * 4 / hourHeight) * 15;
+        start.current = null;
+        if (delta) onResize(clamp(duration + delta));
+      }}
+      onKeyDown={(event) => {
+        const change = event.key === "ArrowUp" || event.key === "ArrowRight" ? 15
+          : event.key === "ArrowDown" || event.key === "ArrowLeft" ? -15 : 0;
+        if (!change && event.key !== "Home" && event.key !== "End") return;
+        event.preventDefault();
+        onResize(event.key === "Home" ? 1 : event.key === "End" ? max : clamp(duration + change));
+      }}
+    />
   );
 }
 
@@ -748,7 +829,7 @@ function Agenda({
   return (
     <div className="agenda">
       {days.map((day) => {
-        const items = tasks.filter((task) => task.dueOn === day);
+        const items = tasks.filter((task) => taskOnDay(task, day));
         const marks = datedCountdowns(countdowns, day);
         const dayEvents = events.filter((event) => event.day === day);
         if (items.length === 0 && marks.length === 0 && dayEvents.length === 0) return null;
@@ -760,7 +841,7 @@ function Agenda({
                 {detailed && <Check on={false} onClick={() => onComplete(task)} />}
                 <button type="button" onClick={() => onTask(task.id)}>
                   <span className="title">{task.title}</span>
-                  <span className="meta">{formatTime(task.dueTime)}</span>
+                  <span className="meta">{formatTime(taskTimeOnDay(task, day))}</span>
                 </button>
               </div>
             ))}
@@ -808,6 +889,7 @@ function ItemDetail({ detail, onClose }: { detail: Detail; onClose: () => void }
 
 function datedCountdowns(items: CountdownRecord[], day: string): CountdownRecord[] {
   return items.filter((item) => {
+    if (item.completed || item.showOnCalendar === false) return false;
     if (item.day === day) return true;
     return item.repeatYearly && item.day.slice(5) === day.slice(5);
   });
@@ -828,9 +910,17 @@ function dayChips(day: string, tasks: TaskRecord[], lists: ListRecord[], countdo
   const chips: Chip[] = [
     ...tasks.filter((task) => task.dueOn === day).map((task) => ({
       key: `task:${task.id}`,
-      title: task.dueTime ? `${formatTime(task.dueTime)} ${task.title}` : task.title,
+      title: task.startOn ? `Due · ${task.title}` : task.dueTime ? `${formatTime(task.dueTime)} ${task.title}` : task.title,
       color: taskColor(task, lists),
-      allDay: task.dueTime == null,
+      allDay: !!task.startOn || task.dueTime == null,
+      task,
+      day,
+    })),
+    ...tasks.filter((task) => !task.someday && task.startOn === day).map((task) => ({
+      key: `planned:${task.id}`,
+      title: task.startTime ? `${formatTime(task.startTime)} ${task.title}` : task.title,
+      color: taskColor(task, lists),
+      allDay: !task.startTime,
       task,
       day,
     })),
@@ -942,10 +1032,10 @@ function FocusCalendar({
   const pull = useRef<number | null>(null);
   const dayWord = anchor === today() ? "Today" : formatDay(anchor, today());
   const dayTasks = tasks
-    .filter((task) => task.dueOn === anchor)
-    .sort((a, b) => (a.completedAt ? 1 : 0) - (b.completedAt ? 1 : 0) || (a.dueTime ?? "99").localeCompare(b.dueTime ?? "99") || a.sort - b.sort);
+    .filter((task) => taskOnDay(task, anchor))
+    .sort((a, b) => (a.completedAt ? 1 : 0) - (b.completedAt ? 1 : 0) || (taskTimeOnDay(a, anchor) ?? "99").localeCompare(taskTimeOnDay(b, anchor) ?? "99") || a.sort - b.sort);
   const dayEvents = events.filter((event) => event.day === anchor);
-  const marked = (day: string) => openTasks.some((task) => task.dueOn === day) || events.some((event) => event.day === day);
+  const marked = (day: string) => openTasks.some((task) => taskOnDay(task, day)) || events.some((event) => event.day === day);
 
   function onWheel(event: ReactWheelEvent<HTMLDivElement>) {
     if (event.currentTarget.scrollTop <= 0 && event.deltaY < -8) setMonthOpen(true);
@@ -1021,7 +1111,7 @@ function FocusCalendar({
                 <button type="button" className={done ? "focus-check on" : "focus-check"} aria-label={done ? "Mark open" : "Complete"} onClick={() => onComplete(task)} />
                 <button type="button" className="focus-name" onClick={() => onTask(task.id)}>{task.title}</button>
                 <span className="focus-when">
-                  <span>{task.dueTime ? formatTime(task.dueTime) : dayWord}</span>
+                  <span>{formatTime(taskTimeOnDay(task, anchor)) || dayWord}</span>
                   {task.repeat && (
                     <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M3.2 8a4.8 4.8 0 0 1 8.1-3.5M12.8 8A4.8 4.8 0 0 1 4.7 11.5M11 3.2h1.8V5M5 12.8H3.2V11" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" /></svg>
                   )}

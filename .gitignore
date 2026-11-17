@@ -9,3 +9,5 @@ ios/.build
 .DS_Store
 *.xcuserstate
 .vercel
+
+web/.slate-local/

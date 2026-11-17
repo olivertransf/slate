@@ -1,5 +1,5 @@
-import { logEvent } from "./log";
-import { mergeLists, preferRecord, sameRecord } from "./merge";
+import { logEvent } from "./log.ts";
+import { mergeLists, preferRecord, sameRecord } from "./merge.ts";
 import {
   KINDS,
   SCHEMA_VERSION,
@@ -7,11 +7,10 @@ import {
   type Kind,
   type Manifest,
   type Snapshot,
-} from "./model";
-import { getText, listKeys, putText } from "./r2";
+} from "./model.ts";
+import { getText, listKeys, putText } from "./r2.ts";
 
 const MANIFEST_KEY = "planner/manifest.json";
-const REVISION_KEY = "planner/revision.txt";
 const CHANGE_LIMIT = 400;
 
 function recordKey(kind: Kind, id: string): string {
@@ -32,12 +31,7 @@ export async function readManifest(): Promise<Manifest> {
 }
 
 export async function readRevision(): Promise<number> {
-  const text = await getText(REVISION_KEY);
-  const parsed = text ? Number(text) : Number.NaN;
-  if (Number.isFinite(parsed)) return parsed;
-  const manifest = await readManifest();
-  await putText(REVISION_KEY, String(manifest.revision));
-  return manifest.revision;
+  return (await readManifest()).revision;
 }
 
 export async function readSnapshot(after = 0): Promise<Snapshot> {
@@ -45,8 +39,9 @@ export async function readSnapshot(after = 0): Promise<Snapshot> {
   if (after > 0 && manifest.revision === after) {
     return { ...emptySnapshot(manifest.revision), reset: false };
   }
-  const tooOld = after > 0 && !manifest.changes.some((change) => change.revision <= after);
-  const full = after <= 0 || tooOld || manifest.changes.length === 0;
+  const firstChange = manifest.changes[0];
+  // The oldest revision in the window can be partially retained after a large batch.
+  const full = after <= 0 || after > manifest.revision || !firstChange || after < firstChange.revision;
   const wanted = new Set(
     full ? [] : manifest.changes.filter((change) => change.revision > after).map((change) => `${change.kind}/${change.id}`),
   );
@@ -77,7 +72,15 @@ export async function readSnapshot(after = 0): Promise<Snapshot> {
 
 const MUTATION_LIMIT = 200;
 
-export async function writeRecords(
+let writes = Promise.resolve();
+
+export function writeRecords(baseRevision: number, incoming: Partial<Snapshot>, mutationId?: string) {
+  const result = writes.then(() => commitRecords(baseRevision, incoming, mutationId));
+  writes = result.then(() => {}, () => {});
+  return result;
+}
+
+async function commitRecords(
   baseRevision: number,
   incoming: Partial<Snapshot>,
   mutationId?: string,
@@ -86,9 +89,7 @@ export async function writeRecords(
   const mutations = manifest.mutations ?? [];
   if (mutationId && mutations.includes(mutationId)) {
     logEvent("sync.duplicate", { revision: manifest.revision });
-    const snapshot = emptySnapshot(manifest.revision);
-    snapshot.reset = false;
-    return snapshot;
+    return readSnapshot(baseRevision);
   }
   if (baseRevision !== manifest.revision) {
     logEvent("sync.conflict", { baseRevision, revision: manifest.revision });
@@ -105,7 +106,8 @@ export async function writeRecords(
     for (const record of records) {
       const text = await getText(recordKey(kind, record.id));
       const existing = text ? (JSON.parse(text) as Snapshot[Kind][number]) : undefined;
-      const chosen = preferRecord(existing, record);
+      // Older clients omit newer optional fields. An explicit null still clears a field.
+      const chosen = preferRecord(existing, { ...existing, ...record });
       if (!existing || !sameRecord(existing, chosen)) {
         await putText(recordKey(kind, record.id), JSON.stringify(chosen));
         changes.push({ revision: nextRevision, kind, id: record.id });
@@ -126,7 +128,6 @@ export async function writeRecords(
       mutations: mutationId ? [...mutations, mutationId].slice(-MUTATION_LIMIT) : mutations,
     };
     await putText(MANIFEST_KEY, JSON.stringify(nextManifest));
-    await putText(REVISION_KEY, String(revision));
   }
   logEvent("sync.write", { revision, wrote, kinds: KINDS.filter((kind) => (incoming[kind]?.length ?? 0) > 0).join(",") });
   return applied;

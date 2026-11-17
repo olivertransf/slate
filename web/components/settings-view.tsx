@@ -4,6 +4,9 @@ import { useEffect, useState } from "react";
 import { forgetGoogle } from "@/lib/google-client";
 import { patchUi, useUiSettings } from "@/lib/ui-settings";
 
+import { BackupSettings } from "./backup";
+import { TodoistImportSettings } from "./todoist-import";
+
 type CalendarInfo = { id: string; name: string; color: string; primary: boolean };
 type Status = { configured: boolean; connected: boolean; calendars: CalendarInfo[] };
 
@@ -11,8 +14,10 @@ export function SettingsView({ notice }: { notice: string | null }) {
   const settings = useUiSettings();
   const [status, setStatus] = useState<Status | null>(null);
   const [redirect, setRedirect] = useState("");
+  const [permission, setPermission] = useState<NotificationPermission | "unsupported">("unsupported");
 
   useEffect(() => {
+    if (typeof Notification !== "undefined") setPermission(Notification.permission);
     setRedirect(`${window.location.origin}/api/google/callback`);
     void fetch("/api/google/status")
       .then((response) => response.json())
@@ -77,6 +82,15 @@ export function SettingsView({ notice }: { notice: string | null }) {
             </div>
           )}
         </section>
+        <section>
+          <h2>Reminders</h2>
+          <p className="hint">This browser checks task reminders while Slate is open. Permission: {permission}.</p>
+          {permission === "default" && <button type="button" className="primary" onClick={() => {
+            void Notification.requestPermission().then(setPermission).catch(() => setPermission("unsupported"));
+          }}>Enable reminders</button>}
+        </section>
+        <BackupSettings />
+        <TodoistImportSettings />
         <section>
           <h2>Layout</h2>
           <label className="slider-row">

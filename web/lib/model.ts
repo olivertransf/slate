@@ -25,10 +25,14 @@ export type Section = {
 
 export type ListRecord = {
   id: string;
+  sourceId?: string;
   name: string;
   color: string;
   sort: number;
   sections: Section[];
+  area?: string;
+  description?: string;
+  favorite?: boolean;
   archivedAt?: string | null;
   updatedAt: string;
   deletedAt: string | null;
@@ -42,6 +46,7 @@ export type Subtask = {
 
 export type TaskRecord = {
   id: string;
+  kind?: "task" | "note";
   title: string;
   notes: string;
   listId: string | null;
@@ -51,6 +56,12 @@ export type TaskRecord = {
   dueOn: string | null;
   dueTime: string | null;
   startOn?: string | null;
+  startTime?: string | null;
+  durationMinutes?: number | null;
+  someday?: boolean;
+  repeatAfterCompletion?: boolean;
+  repeatUntil?: string | null;
+  repeatHistory?: { dueOn: string; completedAt: string }[];
   repeat: RepeatRule | null;
   remindMinutesBefore: number | null;
   completedAt: string | null;
@@ -73,6 +84,8 @@ export type HabitRecord = {
   name: string;
   color: string;
   cadence: "daily" | "weekly";
+  weekdays?: number[];
+  goalUnit?: string;
   goal: number;
   sort: number;
   archivedAt?: string | null;
@@ -99,6 +112,10 @@ export type CountdownRecord = {
   color: string;
   imageKey: string | null;
   remindDaysBefore?: number | null;
+  projectId?: string | null;
+  pinned?: boolean;
+  showOnCalendar?: boolean;
+  completed?: boolean;
   sort: number;
   updatedAt: string;
   deletedAt: string | null;
@@ -214,6 +231,13 @@ export function nextDue(dueOn: string, rule: RepeatRule, from = dueOn): string {
   return cursor;
 }
 
+export function nextTaskDue(task: TaskRecord, completionDay: string): string | null {
+  if (!task.dueOn || !task.repeat) return null;
+  const anchor = task.repeatAfterCompletion ? completionDay : task.dueOn;
+  const next = nextDue(anchor, task.repeat);
+  return task.repeatUntil && next > task.repeatUntil ? null : next;
+}
+
 export function formatDay(value: string, today = dayISO(new Date())): string {
   if (value === today) return "Today";
   if (value === addDays(today, 1)) return "Tomorrow";
@@ -272,7 +296,13 @@ export function sortTasks(tasks: TaskRecord[], mode: SortMode): TaskRecord[] {
 export function searchTasks(tasks: TaskRecord[], query: string): TaskRecord[] {
   const needle = query.trim().toLowerCase();
   if (!needle) return tasks;
-  return tasks.filter((task) => `${task.title} ${task.notes}`.toLowerCase().includes(needle));
+  const titleMatches: TaskRecord[] = [];
+  const noteMatches: TaskRecord[] = [];
+  for (const task of tasks) {
+    if (task.title.toLowerCase().includes(needle)) titleMatches.push(task);
+    else if (task.notes.toLowerCase().includes(needle)) noteMatches.push(task);
+  }
+  return [...titleMatches, ...noteMatches];
 }
 
 export function taskOpen(task: TaskRecord): boolean {
@@ -283,14 +313,23 @@ export function matchesView(task: TaskRecord, view: string, today = dayISO(new D
   if (view === "trash") return task.deletedAt != null;
   if (view === "completed") return task.deletedAt == null && task.completedAt != null;
   if (!taskOpen(task)) return false;
-  if (view === "inbox") return task.listId == null;
-  if (view === "today") return task.dueOn != null && task.dueOn <= today;
+  if (view.startsWith("date:")) return task.dueOn === view.slice(5) || (!task.someday && task.startOn === view.slice(5));
+  if (view === "someday") return task.someday === true;
+  if (view === "inbox") return task.listId == null && !task.someday;
+  if (view === "today") return (task.dueOn != null && task.dueOn <= today) || (!task.someday && task.startOn === today);
+  if (view === "upcoming") return upcomingDay(task, today) != null;
+  if (view === "anytime") return !task.someday && (task.startOn == null || task.startOn <= today);
   if (view === "tomorrow") return task.dueOn === addDays(today, 1);
   if (view === "week") return task.dueOn != null && task.dueOn <= addDays(today, 6);
   if (view === "overdue") return task.dueOn != null && task.dueOn < today;
   if (view.startsWith("list:")) return task.listId === view.slice(5);
   if (view.startsWith("tag:")) return task.tagIds.includes(view.slice(4));
   return false;
+}
+
+export function upcomingDay(task: TaskRecord, today: string): string | null {
+  const futureDates = [task.someday ? null : task.startOn, task.dueOn].filter((date): date is string => !!date && date > today);
+  return futureDates.sort()[0] ?? null;
 }
 
 export function countdownDay(record: CountdownRecord, today = dayISO(new Date())): string {
@@ -310,6 +349,10 @@ export function countdownAmount(record: CountdownRecord, today = dayISO(new Date
   if (record.unit === "month") return Math.floor(span / 30);
   if (record.unit === "year") return Math.floor(span / 365);
   return span;
+}
+
+export function habitScheduled(habit: HabitRecord, day: string): boolean {
+  return !habit.weekdays?.length || habit.weekdays.includes(parseDay(day).getDay());
 }
 
 export function habitCheckId(habitId: string, day: string): string {

@@ -15,6 +15,7 @@ export function Unlock() {
         onSubmit={(event) => {
           event.preventDefault();
           setPending(true);
+          setError(null);
           void unlock(passphrase).then((message) => {
             setError(message);
             setPending(false);
@@ -35,7 +36,7 @@ export function Unlock() {
             autoComplete="current-password"
           />
         </label>
-        <p className="error">{error}</p>
+        <p className="error" role="alert">{error}</p>
         <button type="submit" disabled={pending || passphrase.length === 0}>
           {pending ? "Unlocking" : "Unlock"}
         </button>

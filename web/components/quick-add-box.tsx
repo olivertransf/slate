@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import { formatDay, formatTime } from "@/lib/model";
 import { parseQuickAdd } from "@/lib/quick-add";
 
@@ -10,14 +10,17 @@ export function QuickAddBox({
   onSubmit,
   today,
   placeholder = "Add task",
+  ignored = [],
+  onIgnoredChange,
 }: {
   value: string;
   onChange: (value: string) => void;
   onSubmit: (event: React.FormEvent) => void;
   today: string;
   placeholder?: string;
+  ignored?: string[];
+  onIgnoredChange?: (value: string[]) => void;
 }) {
-  const [ignored, setIgnored] = useState<string[]>([]);
   const parsed = useMemo(() => (value ? parseQuickAdd(value, today, ignored) : null), [value, today, ignored]);
   const hint = [parsed?.dueOn ? formatDay(parsed.dueOn, today) : "", parsed?.dueTime ? formatTime(parsed.dueTime) : ""]
     .filter(Boolean)
@@ -45,7 +48,7 @@ export function QuickAddBox({
           className="quick-parsed"
           onClick={() => {
             const date = parsed?.tokens.find((token) => token.kind === "date" || token.kind === "time");
-            if (date) setIgnored((current) => [...current, date.text.toLowerCase()]);
+            if (date) onIgnoredChange?.([...ignored, date.text.toLowerCase()]);
           }}
         >
           {hint}

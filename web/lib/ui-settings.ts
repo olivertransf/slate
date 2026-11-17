@@ -13,8 +13,8 @@ export type UiSettings = {
 
 export const UI_DEFAULTS: UiSettings = {
   scale: 1,
-  sidebar: 220,
-  detail: 360,
+  sidebar: 240,
+  detail: 498,
   showGoogle: true,
   hiddenCalendars: [],
   calWeeks: 4,
@@ -29,8 +29,8 @@ function clamp(value: number, min: number, max: number): number {
 function sanitize(value: Partial<UiSettings> | null): UiSettings {
   return {
     scale: clamp(Number(value?.scale) || 1, 0.8, 1.4),
-    sidebar: clamp(Number(value?.sidebar) || 220, 180, 420),
-    detail: clamp(Number(value?.detail) || 360, 280, 640),
+    sidebar: clamp(Number(value?.sidebar) || 240, 180, 420),
+    detail: clamp(Number(value?.detail) || 498, 280, 640),
     showGoogle: value?.showGoogle !== false,
     hiddenCalendars: Array.isArray(value?.hiddenCalendars) ? value.hiddenCalendars.filter((id) => typeof id === "string") : [],
     calWeeks: clamp(Math.round(Number(value?.calWeeks) || 4), 1, 8),

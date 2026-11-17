@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
-import { matchesView, nextDue, searchTasks, sortTasks, type TaskRecord } from "./model.ts";
+import { matchesView, nextDue, nextTaskDue, searchTasks, sortTasks, type TaskRecord } from "./model.ts";
 
 function task(partial: Partial<TaskRecord> & Pick<TaskRecord, "id" | "title">): TaskRecord {
   return {
@@ -52,4 +52,42 @@ describe("planner queries", () => {
     assert.deepEqual(searchTasks(tasks, "park").map((item) => item.id), ["1"]);
     assert.deepEqual(sortTasks(tasks, "priority").map((item) => item.id), ["2", "1"]);
   });
+});
+
+it("uses planned start dates without treating them as overdue deadlines", () => {
+  const planned = task({ id: "1", title: "Plan", startOn: "2026-10-15", dueOn: "2026-10-22" });
+  assert.equal(matchesView(planned, "today", "2026-10-15"), true);
+  assert.equal(matchesView(planned, "overdue", "2026-10-16"), false);
+  assert.equal(matchesView(planned, "upcoming", "2026-10-14"), true);
+  assert.equal(matchesView(planned, "anytime", "2026-10-14"), false);
+  assert.equal(matchesView(planned, "anytime", "2026-10-16"), true);
+});
+
+it("ranks title matches ahead of notes matches", () => {
+  const note = task({ id: "1", title: "Walk", notes: "park" });
+  const title = task({ id: "2", title: "Park cleanup" });
+  assert.deepEqual(searchTasks([note, title], "park").map((item) => item.id), ["2", "1"]);
+});
+
+it("defers Someday work while keeping its deadline actionable", () => {
+  const deferred = task({ id: "1", title: "Deferred", someday: true, startOn: "2026-10-15" });
+  const day = "2026-10-15";
+  assert.equal(matchesView(deferred, "someday", day), true);
+  assert.equal(matchesView(deferred, "inbox", day), false);
+  assert.equal(matchesView(deferred, "today", day), false);
+  assert.equal(matchesView({ ...deferred, dueOn: day }, "today", day), true);
+});
+
+it("advances repeats from their configured anchor and respects the end date", () => {
+  const repeating = task({ id: "1", title: "Repeat", dueOn: "2026-10-15", repeat: { every: 1, unit: "week" } });
+  assert.equal(nextTaskDue(repeating, "2026-10-17"), "2026-10-22");
+  assert.equal(nextTaskDue({ ...repeating, repeatAfterCompletion: true }, "2026-10-17"), "2026-10-24");
+  assert.equal(nextTaskDue({ ...repeating, repeatUntil: "2026-10-21" }, "2026-10-17"), null);
+});
+
+it("date navigation matches only the selected due or planned day", () => {
+  const task = { id: "date-check", title: "Check", listId: null, sectionId: null, dueOn: "2026-11-06", startOn: null, someday: false, completedAt: null, deletedAt: null } as import("./model.ts").TaskRecord;
+  assert.equal(matchesView(task, "date:2026-11-06", "2026-11-05"), true);
+  assert.equal(matchesView(task, "date:2026-11-07", "2026-11-05"), false);
+  assert.equal(matchesView({ ...task, completedAt: "2026-11-06T12:00:00Z" }, "date:2026-11-06"), false);
 });
